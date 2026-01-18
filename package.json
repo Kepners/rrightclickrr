@@ -1,0 +1,92 @@
+{
+  "name": "rrightclickrr",
+  "version": "1.0.0",
+  "description": "Right-click any folder to sync it to Google Drive",
+  "main": "main.js",
+  "author": "Kepners <kepners@gmail.com>",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node scripts/launch.js .",
+    "dev": "node scripts/launch.js . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "pack": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps",
+    "create-icons": "node assets/create-icons.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kepners/rrightclickrr.git"
+  },
+  "keywords": [
+    "google-drive",
+    "sync",
+    "upload",
+    "windows",
+    "context-menu",
+    "right-click"
+  ],
+  "bugs": {
+    "url": "https://github.com/Kepners/rrightclickrr/issues"
+  },
+  "homepage": "https://github.com/Kepners/rrightclickrr#readme",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "electron-store": "^8.2.0",
+    "googleapis": "^170.1.0",
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "electron": "^28.3.3",
+    "electron-builder": "^26.4.0"
+  },
+  "build": {
+    "appId": "com.kepners.rrightclickrr",
+    "productName": "RRightclickrr",
+    "copyright": "Copyright © 2026 Kepners",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*",
+      "!assets/create-icons.js"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/",
+        "to": "assets/",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/rrightclickrr.ico",
+      "publisherName": "Kepners"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "assets/rrightclickrr.ico",
+      "uninstallerIcon": "assets/rrightclickrr.ico",
+      "include": "installer.nsh"
+    }
+  }
+}

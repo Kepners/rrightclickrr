@@ -3,87 +3,163 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Windows Explorer                      │
-│                                                          │
-│   User right-clicks file → Context menu appears          │
-│              "Upload to Google Drive"                    │
-└─────────────────────────┬────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                       Windows Explorer                           │
+│                                                                   │
+│   User right-clicks folder → Context menu appears                 │
+│       • "Sync to Google Drive"                                    │
+│       • "Get Google Drive URL"                                    │
+└─────────────────────────┬────────────────────────────────────────┘
                           │
                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Shell Extension                         │
-│                                                          │
-│   - Registered in Windows Registry                       │
-│   - Launches Electron app with file path                 │
-└─────────────────────────┬────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Registry Shell Extension                       │
+│                                                                   │
+│   HKCU\Software\Classes\Directory\shell\SyncToGoogleDrive        │
+│   HKCU\Software\Classes\Directory\shell\GetGDriveUrl             │
+│                                                                   │
+│   → Launches: RRightclickrr.exe --sync-folder "path"             │
+│   → Launches: RRightclickrr.exe --get-url "path"                 │
+└─────────────────────────┬────────────────────────────────────────┘
                           │
                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                 Electron Main Process                    │
-│                                                          │
-│   - Receives file path via command line args             │
-│   - Manages OAuth tokens                                 │
-│   - Shows system tray icon & notifications               │
-└─────────────────────────┬────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Electron Main Process                          │
+│                                                                   │
+│   main.js                                                         │
+│   ├── Command line args parser                                    │
+│   ├── System tray icon & menu                                     │
+│   ├── Settings window (BrowserWindow)                             │
+│   ├── Notifications                                               │
+│   └── IPC handlers                                                │
+│                                                                   │
+│   Components:                                                     │
+│   ├── GoogleAuth (src/lib/google-auth.js)                        │
+│   ├── DriveUploader (src/lib/drive-uploader.js)                  │
+│   ├── FolderSync (src/lib/folder-sync.js)                        │
+│   ├── SyncTracker (src/lib/sync-tracker.js)                      │
+│   └── ContextMenu (src/lib/context-menu.js)                      │
+└─────────────────────────┬────────────────────────────────────────┘
                           │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Google Drive API                        │
-│                                                          │
-│   - OAuth 2.0 authentication                             │
-│   - File upload with progress                            │
-│   - Generate shareable link                              │
-└─────────────────────────┬────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                     Clipboard                            │
-│                                                          │
-│   - Share link automatically copied                      │
-│   - Windows notification shown                           │
-└──────────────────────────────────────────────────────────┘
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+┌───────────────────────┐   ┌───────────────────────────────────┐
+│    Google Drive API    │   │         Local Storage              │
+│                        │   │                                    │
+│ • OAuth 2.0 tokens     │   │ electron-store:                    │
+│ • File upload          │   │ ├── rrightclickrr-config.json     │
+│ • Folder creation      │   │ │   ├── folderMappings            │
+│ • Get share links      │   │ │   ├── showNotifications         │
+│                        │   │ │   └── hasRunBefore              │
+│                        │   │ └── rrightclickrr-sync-db.json    │
+│                        │   │     └── syncedItems{}             │
+│                        │   │                                    │
+│                        │   │ keytar:                            │
+│                        │   │ └── OAuth tokens (encrypted)       │
+└───────────────────────┘   └───────────────────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        Clipboard                                  │
+│                                                                   │
+│   • Share link (after sync)                                       │
+│   • Drive URL (on "Get URL" action)                              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Components
+## Directory Structure
 
-### 1. Shell Extension
-- **Location**: `src/shell-extension/`
-- **Purpose**: Register context menu item in Windows
-- **Implementation**: Registry keys + batch script OR native COM extension
-
-### 2. Electron App
-- **Location**: `main.js`, `src/`
-- **Purpose**: Handle uploads, manage auth, show UI
-- **Runs as**: Background process (system tray)
-
-### 3. Google OAuth
-- **Flow**: Desktop app OAuth 2.0
-- **Storage**: Encrypted tokens in user data folder
-- **Refresh**: Auto-refresh before expiry
-
-### 4. Upload Manager
-- **Location**: `src/uploader.js`
-- **Features**:
-  - Resumable uploads for large files
-  - Progress tracking
-  - Retry on failure
+```
+rrightclickrr/
+├── main.js                 # Electron main process entry
+├── preload.js              # Context bridge for IPC
+├── package.json            # Dependencies & build config
+├── installer.nsh           # NSIS installer script
+│
+├── src/
+│   ├── lib/
+│   │   ├── google-auth.js      # OAuth 2.0 flow
+│   │   ├── drive-uploader.js   # Drive API operations
+│   │   ├── folder-sync.js      # Recursive folder sync
+│   │   ├── sync-tracker.js     # Local sync database
+│   │   └── context-menu.js     # Registry management
+│   │
+│   └── ui/
+│       ├── index.html          # Settings window
+│       ├── styles.css          # UI styling
+│       └── renderer.js         # UI logic
+│
+├── assets/
+│   ├── tray-icon.png           # System tray icon
+│   ├── icon.png                # App icon
+│   ├── sync-icon.ico           # Context menu icon
+│   └── link-icon.ico           # Get URL icon
+│
+└── docs/
+    └── SPEC.md                 # Feature specification
+```
 
 ## Data Flow
 
-1. User right-clicks file in Explorer
-2. Windows shows "Upload to Google Drive" option
-3. User clicks → Shell extension launches Electron
-4. Electron checks OAuth token (prompts login if needed)
-5. File uploaded to Drive with progress shown
-6. Share link generated and copied to clipboard
-7. Windows notification: "Uploaded! Link copied."
+### Sync Flow
+```
+1. User right-clicks folder → "Sync to Google Drive"
+2. Shell launches: RRightclickrr.exe --sync-folder "C:\path\to\folder"
+3. Electron receives args, calls handleFolderUpload()
+4. GoogleAuth checks token validity (refresh if needed)
+5. FolderSync.syncFolder():
+   a. Scan local folder recursively
+   b. Create matching folder structure in Drive
+   c. Upload each file with progress updates
+   d. Track sync in SyncTracker database
+6. Copy share link to clipboard
+7. Show Windows notification: "Sync complete!"
+```
+
+### Get URL Flow
+```
+1. User right-clicks synced folder → "Get Google Drive URL"
+2. Shell launches: RRightclickrr.exe --get-url "C:\path\to\folder"
+3. Electron receives args, calls handleGetUrl()
+4. SyncTracker.getSyncInfo() looks up local database
+5. If found: Copy driveUrl to clipboard
+6. Show notification: "URL copied!"
+```
 
 ## Security
 
-- OAuth tokens encrypted at rest
-- No file data stored locally
-- Minimal permissions: Drive file access only
+### Token Storage
+- OAuth tokens encrypted with AES-256-CBC
+- Stored via `keytar` in Windows Credential Manager
+- Never stored in plain text
+
+### Permissions
+- `drive.file`: Access to files created by app
+- `drive.metadata.readonly`: Read folder structure
+
+### Registry
+- Context menu entries in HKCU (per-user, no admin required)
+- Cleaned up on uninstall via NSIS script
+
+## Future: Windows 11 Modern Context Menu
+
+The current implementation uses classic shell extension (registry-based), which appears in:
+- Windows 10: Directly in context menu
+- Windows 11: Under "Show more options" (classic menu)
+
+For native Windows 11 modern context menu (top command bar), requires:
+- Native shell extension DLL (C# or C++)
+- Implements `IExplorerCommand` COM interface
+- Registered via MSIX package or COM registration
+
+This is planned for v2.0.
+
+## Future: Overlay Icons
+
+To show sync status icons on folders (like OneDrive):
+- Implement `IShellIconOverlayIdentifier` COM interface
+- Native DLL registration in registry
+- Query SyncTracker database for sync status
 
 ---
 

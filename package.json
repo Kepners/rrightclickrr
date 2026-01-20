@@ -1,6 +1,6 @@
 {
   "name": "rrightclickrr",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Right-click any folder to sync it to Google Drive",
   "main": "main.js",
   "author": "Kepners <kepners@gmail.com>",
@@ -70,6 +70,17 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "shell-extension/dist/",
+        "to": "../shell-extension/",
+        "filter": [
+          "*.dll"
+        ]
+      },
+      {
+        "from": "shell-extension/AppxManifest.xml",
+        "to": "../shell-extension/AppxManifest.xml"
       }
     ],
     "win": {

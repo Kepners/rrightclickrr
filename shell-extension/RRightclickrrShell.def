@@ -1,0 +1,5 @@
+LIBRARY RRightclickrrShell
+
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

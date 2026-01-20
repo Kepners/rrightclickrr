@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap10 desktop4 desktop5 com rescap">
+
+  <Identity
+    Name="Kepners.RRightclickrr"
+    Publisher="CN=Kepners"
+    Version="1.2.0.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>RRightclickrr</DisplayName>
+    <PublisherDisplayName>Kepners</PublisherDisplayName>
+    <Logo>assets\icon.png</Logo>
+    <Description>Right-click sync to Google Drive</Description>
+    <!-- Allow external content for sparse package -->
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="RRightclickrr" Executable="RRightclickrr.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="RRightclickrr"
+        Description="Right-click sync to Google Drive"
+        BackgroundColor="#2C6E49"
+        Square150x150Logo="assets\icon.png"
+        Square44x44Logo="assets\icon.png"
+        AppListEntry="none">
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- COM Server Registration for Shell Extension DLL -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="RRightclickrr Context Menu">
+              <!-- Sync to Drive -->
+              <com:Class
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B"
+                Path="shell-extension\RRightclickrrShell.dll"
+                ThreadingModel="STA" />
+              <!-- Copy to Drive -->
+              <com:Class
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C"
+                Path="shell-extension\RRightclickrrShell.dll"
+                ThreadingModel="STA" />
+              <!-- Get Drive URL -->
+              <com:Class
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D"
+                Path="shell-extension\RRightclickrrShell.dll"
+                ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <!-- File Explorer Context Menu Registration -->
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <!-- Show on directories/folders -->
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="SyncToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B" />
+              <desktop5:Verb Id="CopyToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C" />
+              <desktop5:Verb Id="GetDriveURL" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D" />
+            </desktop5:ItemType>
+            <!-- Show on directory background (when clicking in empty space) -->
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="SyncToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B" />
+            </desktop5:ItemType>
+            <!-- Show on all files -->
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="CopyToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C" />
+              <desktop5:Verb Id="GetDriveURL" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

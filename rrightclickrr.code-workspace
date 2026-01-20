@@ -10,6 +10,8 @@
       "statusBar.foreground": "#FEFEE3",
       "sideBar.background": "#1a1a1a",
       "sideBarSectionHeader.background": "#2C6E49"
-    }
+    },
+    "claudeCode.allowDangerouslySkipPermissions": true,
+    "claudeCode.useCtrlEnterToSend": false
   }
 }

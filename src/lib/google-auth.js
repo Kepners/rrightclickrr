@@ -49,7 +49,7 @@ class GoogleAuth {
         return true;
       }
     } catch (error) {
-      console.error('Failed to load tokens:', error);
+      // Failed to load tokens - ignore silently
     }
     return false;
   }
@@ -60,7 +60,7 @@ class GoogleAuth {
       await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, encrypted);
       this.tokens = tokens;
     } catch (error) {
-      console.error('Failed to save tokens:', error);
+      // Failed to save tokens - ignore silently
     }
   }
 
@@ -69,7 +69,7 @@ class GoogleAuth {
       await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
       this.tokens = null;
     } catch (error) {
-      console.error('Failed to clear tokens:', error);
+      // Failed to clear tokens - ignore silently
     }
   }
 
@@ -194,7 +194,7 @@ class GoogleAuth {
       try {
         await this.oauth2Client.revokeToken(this.tokens.access_token);
       } catch (error) {
-        console.error('Failed to revoke token:', error);
+        // Failed to revoke token - ignore silently
       }
     }
     await this.clearTokens();

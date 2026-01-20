@@ -1,54 +1,58 @@
 ; Custom NSIS installer script for RRightclickrr
-; This registers the context menu entries on install and removes them on uninstall
+; Registers context menu entries on install, removes them on uninstall
+; Uses reg.exe for reliability (PowerShell can hang)
 
 !macro customInstall
-  ; Register context menu entries using PowerShell
   DetailPrint "Registering Windows context menu..."
 
-  ; Create the PowerShell script content
-  nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -Command "\
-    $exePath = \"$INSTDIR\\RRightclickrr.exe\"; \
-    $iconPath = \"$INSTDIR\\resources\\app\\assets\\sync-icon.ico\"; \
-    $linkIconPath = \"$INSTDIR\\resources\\app\\assets\\link-icon.ico\"; \
-    \
-    # Sync to Google Drive - Directory context menu \
-    $syncPath = \"HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive\"; \
-    New-Item -Path $syncPath -Force | Out-Null; \
-    Set-ItemProperty -Path $syncPath -Name \"(Default)\" -Value \"Sync to Google Drive\"; \
-    Set-ItemProperty -Path $syncPath -Name \"Icon\" -Value $iconPath; \
-    Set-ItemProperty -Path $syncPath -Name \"Position\" -Value \"Top\"; \
-    New-Item -Path \"$syncPath\\command\" -Force | Out-Null; \
-    Set-ItemProperty -Path \"$syncPath\\command\" -Name \"(Default)\" -Value \"\`\"$exePath\`\" --sync-folder \`\"%V\`\"\"; \
-    \
-    # Sync - Directory Background \
-    $bgSyncPath = \"HKCU:\\Software\\Classes\\Directory\\Background\\shell\\SyncToGoogleDrive\"; \
-    New-Item -Path $bgSyncPath -Force | Out-Null; \
-    Set-ItemProperty -Path $bgSyncPath -Name \"(Default)\" -Value \"Sync this folder to Google Drive\"; \
-    Set-ItemProperty -Path $bgSyncPath -Name \"Icon\" -Value $iconPath; \
-    New-Item -Path \"$bgSyncPath\\command\" -Force | Out-Null; \
-    Set-ItemProperty -Path \"$bgSyncPath\\command\" -Name \"(Default)\" -Value \"\`\"$exePath\`\" --sync-folder \`\"%V\`\"\"; \
-    \
-    # Get Google Drive URL - Directory context menu \
-    $urlPath = \"HKCU:\\Software\\Classes\\Directory\\shell\\GetGDriveUrl\"; \
-    New-Item -Path $urlPath -Force | Out-Null; \
-    Set-ItemProperty -Path $urlPath -Name \"(Default)\" -Value \"Get Google Drive URL\"; \
-    Set-ItemProperty -Path $urlPath -Name \"Icon\" -Value $linkIconPath; \
-    New-Item -Path \"$urlPath\\command\" -Force | Out-Null; \
-    Set-ItemProperty -Path \"$urlPath\\command\" -Name \"(Default)\" -Value \"\`\"$exePath\`\" --get-url \`\"%V\`\"\"; \
-  "'
+  ; FOLDER: Sync to Google Drive
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_SyncDrive" /ve /d "Sync to Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_SyncDrive" /v "Icon" /d "$INSTDIR\resources\assets\sync-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_SyncDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --sync-folder \"%V\"" /f'
 
-  DetailPrint "Context menu registered successfully."
+  ; FOLDER: Copy to Google Drive
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyDrive" /ve /d "Copy to Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyDrive" /v "Icon" /d "$INSTDIR\resources\assets\copy-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --copy-folder \"%V\"" /f'
+
+  ; FOLDER: Open in Google Drive
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_OpenDrive" /ve /d "Open in Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%V\"" /f'
+
+  ; BACKGROUND: Sync this folder
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /ve /d "Sync this folder to Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /v "Icon" /d "$INSTDIR\resources\assets\sync-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --sync-folder \"%V\"" /f'
+
+  ; BACKGROUND: Copy this folder
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyDrive" /ve /d "Copy this folder to Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyDrive" /v "Icon" /d "$INSTDIR\resources\assets\copy-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --copy-folder \"%V\"" /f'
+
+  ; BACKGROUND: Open this folder in Drive
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive" /ve /d "Open this folder in Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%V\"" /f'
+
+  ; FILE: Open in Google Drive
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive" /ve /d "Open in Google Drive" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%1\"" /f'
+
+  DetailPrint "Context menu registered."
 !macroend
 
 !macro customUnInstall
-  ; Remove context menu entries
-  DetailPrint "Removing Windows context menu entries..."
+  DetailPrint "Removing context menu entries..."
 
-  nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -Command "\
-    Remove-Item -Path \"HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive\" -Recurse -Force -ErrorAction SilentlyContinue; \
-    Remove-Item -Path \"HKCU:\\Software\\Classes\\Directory\\Background\\shell\\SyncToGoogleDrive\" -Recurse -Force -ErrorAction SilentlyContinue; \
-    Remove-Item -Path \"HKCU:\\Software\\Classes\\Directory\\shell\\GetGDriveUrl\" -Recurse -Force -ErrorAction SilentlyContinue; \
-  "'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_SyncDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_CopyDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_OpenDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_CopyDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\*\shell\RR_OpenDrive" /f'
 
   DetailPrint "Context menu entries removed."
 !macroend

@@ -84,8 +84,13 @@ function initLogging(appInstance) {
   } catch (e) {}
 }
 
-require('dotenv').config();
+// Load .env from app directory (works for both dev and packaged)
 const path = require('path');
+const appRoot = app.isPackaged
+  ? path.dirname(process.execPath)
+  : __dirname;
+require('dotenv').config({ path: path.join(appRoot, '.env') });
+bootLog('dotenv loaded from:', path.join(appRoot, '.env'));
 const Store = require('electron-store');
 const { GoogleAuth } = require('./src/lib/google-auth');
 const { DriveUploader } = require('./src/lib/drive-uploader');
@@ -126,8 +131,8 @@ if (!gotTheLock) {
       ? path.join(process.resourcesPath, 'assets')
       : path.join(__dirname, 'assets');
 
-    // Try PNG first (most reliable), then ICO as fallback
-    const iconCandidates = ['tray-icon.png', 'icon.png', 'rrightclickrr.ico'];
+    // Try multiple icon files - ICO works fine on Windows
+    const iconCandidates = ['tray-icon.ico', 'tray-icon.png', 'icon.png', 'rrightclickrr.ico'];
     let iconPath = null;
     const fs = require('fs');
 

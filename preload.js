@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   // Context menu registration
   registerContextMenu: () => ipcRenderer.invoke('register-context-menu'),
   unregisterContextMenu: () => ipcRenderer.invoke('unregister-context-menu'),
+  isContextMenuRegistered: () => ipcRenderer.invoke('is-context-menu-registered'),
+  restartExplorer: () => ipcRenderer.invoke('restart-explorer'),
 
   // Events
   onSyncProgress: (callback) => {

@@ -8,6 +8,7 @@ const signInBtn = document.getElementById('signInBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const registerMenuBtn = document.getElementById('registerMenuBtn');
 const unregisterMenuBtn = document.getElementById('unregisterMenuBtn');
+const contextMenuStatus = document.getElementById('contextMenuStatus');
 const mappingsList = document.getElementById('mappingsList');
 const addMappingBtn = document.getElementById('addMappingBtn');
 const addMappingModal = document.getElementById('addMappingModal');
@@ -31,8 +32,24 @@ let settings = {
 async function init() {
   settings = await window.api.getSettings();
   updateAuthUI();
+  updateContextMenuUI();
   renderMappings();
   showNotifications.checked = settings.showNotifications;
+}
+
+async function updateContextMenuUI() {
+  const isRegistered = await window.api.isContextMenuRegistered();
+  if (isRegistered) {
+    registerMenuBtn.textContent = '✓ Right-Click Menu Enabled';
+    registerMenuBtn.classList.add('registered');
+    contextMenuStatus.textContent = '✓ Active! Right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.style.color = '#4C956C';
+  } else {
+    registerMenuBtn.textContent = 'Enable Right-Click Menu';
+    registerMenuBtn.classList.remove('registered');
+    contextMenuStatus.textContent = 'After enabling, right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.style.color = '';
+  }
 }
 
 function updateAuthUI() {
@@ -131,20 +148,26 @@ registerMenuBtn.addEventListener('click', async () => {
   const result = await window.api.registerContextMenu();
 
   if (result.success) {
-    alert('Right-click menu enabled! You may need to restart Explorer or reboot for changes to take effect.');
+    registerMenuBtn.textContent = '✓ Right-Click Menu Enabled';
+    registerMenuBtn.classList.add('registered');
+    contextMenuStatus.textContent = '✓ Active! Right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.style.color = '#4C956C';
   } else {
     alert('Failed to register: ' + result.error);
+    registerMenuBtn.textContent = 'Enable Right-Click Menu';
   }
 
   registerMenuBtn.disabled = false;
-  registerMenuBtn.textContent = 'Enable Right-Click Menu';
 });
 
 unregisterMenuBtn.addEventListener('click', async () => {
   const result = await window.api.unregisterContextMenu();
 
   if (result.success) {
-    alert('Right-click menu disabled.');
+    registerMenuBtn.textContent = 'Enable Right-Click Menu';
+    registerMenuBtn.classList.remove('registered');
+    contextMenuStatus.textContent = 'After enabling, right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.style.color = '';
   } else {
     alert('Failed to unregister: ' + result.error);
   }

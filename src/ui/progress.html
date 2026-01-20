@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Syncing...</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      overflow: hidden !important;
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #1a1a1a;
+      color: white;
+      padding: 20px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-app-region: drag;
+      overflow: hidden;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid #333;
+      border-top: 3px solid #2C6E49;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #2C6E49;
+    }
+    .locations {
+      margin-bottom: 16px;
+    }
+    .location-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .location-label {
+      font-size: 11px;
+      color: #888;
+      width: 40px;
+      flex-shrink: 0;
+    }
+    .location-path {
+      font-size: 11px;
+      color: #ccc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .progress-container {
+      position: relative;
+      margin-bottom: 12px;
+    }
+    .progress-bar {
+      height: 28px;
+      background: #252525;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #333;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2C6E49, #4C956C, #2C6E49);
+      background-size: 200% 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      animation: shimmer 2s linear infinite;
+      border-radius: 14px;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .progress-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 13px;
+      font-weight: 600;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    }
+    .current-file {
+      font-size: 11px;
+      color: #4C956C;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 8px;
+    }
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .speed-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 12px;
+    }
+    .speed { color: #4C956C; font-weight: 500; }
+    .complete { color: #4C956C; }
+    .error { color: #e74c3c; }
+    .footer {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: auto;
+    }
+    .cancel-btn {
+      -webkit-app-region: no-drag;
+      background: #333;
+      color: #999;
+      border: 1px solid #444;
+      padding: 8px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .cancel-btn:hover {
+      background: #444;
+      color: #fff;
+      border-color: #555;
+    }
+    .cancel-btn.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="spinner" id="spinner"></div>
+    <div class="title" id="title">Uploading to Google Drive...</div>
+  </div>
+  <div class="locations">
+    <div class="location-row">
+      <span class="location-label">From:</span>
+      <span class="location-path" id="fromPath">-</span>
+    </div>
+    <div class="location-row">
+      <span class="location-label">To:</span>
+      <span class="location-path" id="toPath">Google Drive</span>
+    </div>
+  </div>
+  <div class="progress-container">
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-text" id="progressText">0%</div>
+  </div>
+  <div class="current-file" id="currentFile">Preparing...</div>
+  <div class="stats">
+    <span id="fileCount">0 / 0 files</span>
+    <span id="dataTransferred">0 B / 0 B</span>
+  </div>
+  <div class="speed-stats">
+    <span>Speed: <span class="speed" id="transferSpeed">--</span></span>
+  </div>
+  <div class="footer">
+    <button class="cancel-btn" id="cancelBtn">Cancel</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    document.getElementById('cancelBtn').addEventListener('click', () => {
+      window.close();
+    });
+
+    ipcRenderer.on('sync-init', (event, data) => {
+      document.getElementById('fromPath').textContent = data.folderPath;
+      document.getElementById('toPath').textContent = 'Google Drive / ' + data.folderPath.split(/[/\\]/).pop();
+    });
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function formatSpeed(bytesPerSecond) {
+      if (bytesPerSecond === 0) return '--';
+      if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s';
+      if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s';
+      return (bytesPerSecond / (1024 * 1024)).toFixed(2) + ' MB/s';
+    }
+
+    ipcRenderer.on('sync-progress', (event, data) => {
+      const percent = Math.round((data.current / data.total) * 100);
+      document.getElementById('progressFill').style.width = percent + '%';
+      document.getElementById('progressText').textContent = percent + '%';
+      document.getElementById('fileCount').textContent = `${data.current} / ${data.total} files`;
+      if (data.currentFile) {
+        document.getElementById('currentFile').textContent = 'Uploading: ' + data.currentFile;
+      }
+      // Update transfer stats
+      if (data.uploadedBytes !== undefined && data.totalBytes !== undefined) {
+        document.getElementById('dataTransferred').textContent =
+          `${formatBytes(data.uploadedBytes)} / ${formatBytes(data.totalBytes)}`;
+      }
+      if (data.bytesPerSecond !== undefined) {
+        document.getElementById('transferSpeed').textContent = formatSpeed(data.bytesPerSecond);
+      }
+    });
+
+    ipcRenderer.on('sync-complete', (event, data) => {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = '✓ Upload Complete!';
+      document.getElementById('title').classList.add('complete');
+      document.getElementById('progressFill').style.width = '100%';
+      document.getElementById('progressFill').style.animation = 'none';
+      document.getElementById('progressFill').style.background = '#4C956C';
+      document.getElementById('progressText').textContent = '100%';
+      document.getElementById('currentFile').textContent = 'Link copied to clipboard!';
+      document.getElementById('currentFile').classList.add('complete');
+      document.getElementById('fileCount').textContent = data.filesUploaded + ' files uploaded';
+      document.getElementById('transferSpeed').textContent = 'Complete';
+      document.getElementById('cancelBtn').classList.add('hidden');
+      setTimeout(() => window.close(), 3000);
+    });
+
+    ipcRenderer.on('sync-error', (event, data) => {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = '✗ Upload Failed';
+      document.getElementById('title').classList.add('error');
+      document.getElementById('currentFile').textContent = data.error;
+      document.getElementById('currentFile').classList.add('error');
+      document.getElementById('cancelBtn').textContent = 'Close';
+    });
+  </script>
+</body>
+</html>

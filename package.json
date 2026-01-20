@@ -61,8 +61,8 @@
     ],
     "extraResources": [
       {
-        "from": "launcher.vbs",
-        "to": "launcher.vbs"
+        "from": ".env",
+        "to": "../.env"
       },
       {
         "from": "assets/",

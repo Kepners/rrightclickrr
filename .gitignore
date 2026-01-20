@@ -4,11 +4,34 @@ node_modules/
 # Build output
 dist/
 dist2/
+dist-release/
 out/
+
+# Electron runtime files at project root (for dev testing)
+/RRightclickrr.exe
+/LICENSE.electron.txt
+/LICENSES.chromium.html
+/resources/
+/locales/
+/chrome_*.pak
+/resources.pak
+/icudtl.dat
+/snapshot_blob.bin
+/v8_context_snapshot.bin
+/d3dcompiler_47.dll
+/dxcompiler.dll
+/dxil.dll
+/ffmpeg.dll
+/libEGL.dll
+/libGLESv2.dll
+/vk_swiftshader.dll
+/vk_swiftshader_icd.json
+/vulkan-1.dll
 
 # Shell extension build
 shell-extension/build/
 shell-extension/dist/
+shell-extension/*.dll
 
 # Environment files
 .env

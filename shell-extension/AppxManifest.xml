@@ -13,7 +13,7 @@
   <Identity
     Name="Kepners.RRightclickrr"
     Publisher="CN=Kepners"
-    Version="1.2.2.0"
+    Version="1.2.3.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -53,19 +53,9 @@
         <com:Extension Category="windows.comServer">
           <com:ComServer>
             <com:SurrogateServer DisplayName="RRightclickrr Context Menu">
-              <!-- Sync to Drive -->
+              <!-- Root Menu (parent with subcommands) -->
               <com:Class
-                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B"
-                Path="shell-extension\RRightclickrrShell.dll"
-                ThreadingModel="STA" />
-              <!-- Copy to Drive -->
-              <com:Class
-                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C"
-                Path="shell-extension\RRightclickrrShell.dll"
-                ThreadingModel="STA" />
-              <!-- Get Drive URL -->
-              <com:Class
-                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D"
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A"
                 Path="shell-extension\RRightclickrrShell.dll"
                 ThreadingModel="STA" />
             </com:SurrogateServer>
@@ -77,18 +67,11 @@
           <desktop4:FileExplorerContextMenus>
             <!-- Show on directories/folders -->
             <desktop5:ItemType Type="Directory">
-              <desktop5:Verb Id="SyncToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B" />
-              <desktop5:Verb Id="CopyToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C" />
-              <desktop5:Verb Id="GetDriveURL" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D" />
-            </desktop5:ItemType>
-            <!-- Show on directory background (when clicking in empty space) -->
-            <desktop5:ItemType Type="Directory\Background">
-              <desktop5:Verb Id="SyncToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B" />
+              <desktop5:Verb Id="RRightclickrr" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A" />
             </desktop5:ItemType>
             <!-- Show on all files -->
             <desktop5:ItemType Type="*">
-              <desktop5:Verb Id="CopyToDrive" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6C" />
-              <desktop5:Verb Id="GetDriveURL" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6D" />
+              <desktop5:Verb Id="RRightclickrr" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

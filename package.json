@@ -1,6 +1,6 @@
 {
   "name": "rrightclickrr",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Right-click any folder to sync it to Google Drive",
   "main": "main.js",
   "author": "Kepners <kepners@gmail.com>",

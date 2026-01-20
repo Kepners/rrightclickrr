@@ -36,8 +36,9 @@ if exist Release\RRightclickrrShell.dll (
     echo SUCCESS: DLL created!
     if not exist ..\dist mkdir ..\dist
     copy /Y Release\RRightclickrrShell.dll ..\dist\
+    copy /Y Release\RRightclickrrShell.dll ..\RRightclickrrShell.dll
     echo.
-    echo DLL is ready at: shell-extension\dist\RRightclickrrShell.dll
+    echo DLL copied to shell-extension\ for sparse package
 ) else (
     echo FAILED: No DLL found
     pause

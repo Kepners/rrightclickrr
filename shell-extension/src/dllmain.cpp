@@ -104,6 +104,10 @@ private:
 };
 
 // CLSIDs
+// {7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A} - Root Menu (parent with subcommands)
+static const CLSID CLSID_RootMenu =
+{ 0x7b3b5e52, 0xa1f0, 0x4c5e, { 0x9b, 0x8a, 0x1c, 0x2d, 0x3e, 0x4f, 0x5a, 0x6a } };
+
 // {7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6B}
 static const CLSID CLSID_SyncToDrive =
 { 0x7b3b5e52, 0xa1f0, 0x4c5e, { 0x9b, 0x8a, 0x1c, 0x2d, 0x3e, 0x4f, 0x5a, 0x6b } };
@@ -121,7 +125,9 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv)
     *ppv = nullptr;
 
     CommandType type;
-    if (IsEqualCLSID(rclsid, CLSID_SyncToDrive))
+    if (IsEqualCLSID(rclsid, CLSID_RootMenu))
+        type = CommandType::RootMenu;
+    else if (IsEqualCLSID(rclsid, CLSID_SyncToDrive))
         type = CommandType::SyncToDrive;
     else if (IsEqualCLSID(rclsid, CLSID_CopyToDrive))
         type = CommandType::CopyToDrive;

@@ -3,7 +3,12 @@ node_modules/
 
 # Build output
 dist/
+dist2/
 out/
+
+# Shell extension build
+shell-extension/build/
+shell-extension/dist/
 
 # Environment files
 .env

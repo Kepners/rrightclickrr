@@ -8,6 +8,7 @@ class FolderWatcher extends EventEmitter {
     this.watchers = new Map(); // Map<localPath, watcher>
     this.pendingChanges = new Map(); // Map<filePath, timeout> for debouncing
     this.debounceMs = 2000; // Wait 2 seconds after last change before syncing
+    this.excludedPaths = new Map(); // Map<localPath, Set<excludedSubpath>>
   }
 
   /**
@@ -15,12 +16,16 @@ class FolderWatcher extends EventEmitter {
    * @param {string} localPath - Local folder path to watch
    * @param {string} driveId - Google Drive folder ID to sync to
    * @param {string} driveName - Display name of the Drive folder
+   * @param {string[]} excludePaths - Array of subpaths to exclude from syncing
    */
-  watch(localPath, driveId, driveName) {
+  watch(localPath, driveId, driveName, excludePaths = []) {
     // Don't watch if already watching
     if (this.watchers.has(localPath)) {
       return;
     }
+
+    // Store excluded paths
+    this.excludedPaths.set(localPath, new Set(excludePaths.map(p => p.toLowerCase())));
 
     const watcher = chokidar.watch(localPath, {
       persistent: true,
@@ -50,6 +55,11 @@ class FolderWatcher extends EventEmitter {
    * Handle a file change with debouncing
    */
   handleChange(type, filePath, localPath, driveId, driveName) {
+    // Check if this file is in an excluded path
+    if (this.isExcluded(filePath, localPath)) {
+      return; // Skip excluded files
+    }
+
     // Clear existing timeout for this file
     if (this.pendingChanges.has(filePath)) {
       clearTimeout(this.pendingChanges.get(filePath));
@@ -72,6 +82,60 @@ class FolderWatcher extends EventEmitter {
   }
 
   /**
+   * Check if a file path is in an excluded subfolder
+   */
+  isExcluded(filePath, localPath) {
+    const excludeSet = this.excludedPaths.get(localPath);
+    if (!excludeSet || excludeSet.size === 0) {
+      return false;
+    }
+
+    const relativePath = path.relative(localPath, filePath).toLowerCase();
+
+    // Check if the relative path starts with any excluded path
+    for (const excluded of excludeSet) {
+      if (relativePath === excluded || relativePath.startsWith(excluded + path.sep)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Add an exclusion to a watched folder
+   * @param {string} localPath - The watched folder path
+   * @param {string} excludePath - The subpath to exclude (relative to localPath)
+   */
+  addExclusion(localPath, excludePath) {
+    if (!this.excludedPaths.has(localPath)) {
+      this.excludedPaths.set(localPath, new Set());
+    }
+    this.excludedPaths.get(localPath).add(excludePath.toLowerCase());
+  }
+
+  /**
+   * Remove an exclusion from a watched folder
+   * @param {string} localPath - The watched folder path
+   * @param {string} excludePath - The subpath to un-exclude
+   */
+  removeExclusion(localPath, excludePath) {
+    const excludeSet = this.excludedPaths.get(localPath);
+    if (excludeSet) {
+      excludeSet.delete(excludePath.toLowerCase());
+    }
+  }
+
+  /**
+   * Get all exclusions for a watched folder
+   * @param {string} localPath - The watched folder path
+   * @returns {string[]} - Array of excluded subpaths
+   */
+  getExclusions(localPath) {
+    const excludeSet = this.excludedPaths.get(localPath);
+    return excludeSet ? Array.from(excludeSet) : [];
+  }
+
+  /**
    * Stop watching a folder
    * @param {string} localPath - Local folder path to stop watching
    */
@@ -80,6 +144,7 @@ class FolderWatcher extends EventEmitter {
     if (entry) {
       entry.watcher.close();
       this.watchers.delete(localPath);
+      this.excludedPaths.delete(localPath); // Clean up exclusions
       this.emit('unwatched', { localPath });
     }
   }
@@ -92,6 +157,7 @@ class FolderWatcher extends EventEmitter {
       entry.watcher.close();
     }
     this.watchers.clear();
+    this.excludedPaths.clear();
 
     // Clear all pending timeouts
     for (const timeout of this.pendingChanges.values()) {
@@ -107,7 +173,8 @@ class FolderWatcher extends EventEmitter {
     return Array.from(this.watchers.entries()).map(([localPath, entry]) => ({
       localPath,
       driveId: entry.driveId,
-      driveName: entry.driveName
+      driveName: entry.driveName,
+      excludePaths: this.getExclusions(localPath)
     }));
   }
 

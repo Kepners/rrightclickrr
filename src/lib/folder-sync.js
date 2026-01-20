@@ -10,6 +10,15 @@ class FolderSync {
     this.logFile = path.join(baseDir, 'rrightclickrr-sync.log');
     this.cancelled = false;
     this.abortController = null;
+    this.excludePaths = []; // Paths to exclude from sync
+  }
+
+  /**
+   * Set paths to exclude from sync
+   * @param {string[]} paths - Array of relative paths to exclude
+   */
+  setExcludePaths(paths) {
+    this.excludePaths = (paths || []).map(p => p.toLowerCase());
   }
 
   cancel() {
@@ -154,17 +163,28 @@ class FolderSync {
     };
   }
 
-  getAllFiles(dirPath, arrayOfFiles = []) {
+  getAllFiles(dirPath, arrayOfFiles = [], basePath = null) {
+    // Track base path for exclusion checking
+    if (basePath === null) {
+      basePath = dirPath;
+    }
+
     const files = fs.readdirSync(dirPath);
 
     files.forEach(file => {
       const fullPath = path.join(dirPath, file);
       const stat = fs.statSync(fullPath);
 
+      // Check if this path is excluded
+      const relativePath = path.relative(basePath, fullPath).toLowerCase();
+      if (this.isPathExcluded(relativePath)) {
+        return; // Skip excluded paths
+      }
+
       if (stat.isDirectory()) {
         // Skip hidden folders and system folders
         if (!file.startsWith('.') && !this.isSystemFolder(file)) {
-          this.getAllFiles(fullPath, arrayOfFiles);
+          this.getAllFiles(fullPath, arrayOfFiles, basePath);
         }
       } else {
         // Skip hidden files and system files
@@ -175,6 +195,23 @@ class FolderSync {
     });
 
     return arrayOfFiles;
+  }
+
+  /**
+   * Check if a path is in the exclusion list
+   */
+  isPathExcluded(relativePath) {
+    if (this.excludePaths.length === 0) {
+      return false;
+    }
+
+    const normalizedPath = relativePath.toLowerCase();
+    for (const excluded of this.excludePaths) {
+      if (normalizedPath === excluded || normalizedPath.startsWith(excluded + path.sep)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   isSystemFolder(name) {

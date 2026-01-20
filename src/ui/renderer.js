@@ -19,7 +19,6 @@ const refreshDriveFoldersBtn = document.getElementById('refreshDriveFoldersBtn')
 const cancelMappingBtn = document.getElementById('cancelMappingBtn');
 const saveMappingBtn = document.getElementById('saveMappingBtn');
 const showNotifications = document.getElementById('showNotifications');
-const testSyncBtn = document.getElementById('testSyncBtn');
 
 let settings = {
   folderMappings: [],
@@ -42,12 +41,12 @@ async function updateContextMenuUI() {
   if (isRegistered) {
     registerMenuBtn.textContent = '✓ Right-Click Menu Enabled';
     registerMenuBtn.classList.add('registered');
-    contextMenuStatus.textContent = '✓ Active! Right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.textContent = '✓ Active! Right-click any folder → "Show more options" → RRightclickrr.';
     contextMenuStatus.style.color = '#4C956C';
   } else {
     registerMenuBtn.textContent = 'Enable Right-Click Menu';
     registerMenuBtn.classList.remove('registered');
-    contextMenuStatus.textContent = 'After enabling, right-click any folder to sync it to Google Drive.';
+    contextMenuStatus.textContent = 'After enabling, right-click any folder → "Show more options" → find RRightclickrr options.';
     contextMenuStatus.style.color = '';
   }
 }
@@ -76,28 +75,50 @@ function renderMappings() {
     return;
   }
 
-  mappingsList.innerHTML = settings.folderMappings.map((mapping, index) => `
+  mappingsList.innerHTML = settings.folderMappings.map((mapping, index) => {
+    const excludeCount = (mapping.excludePaths || []).length;
+    const excludeText = excludeCount > 0 ? `<span class="exclude-badge">${excludeCount} excluded</span>` : '';
+
+    return `
     <div class="mapping-item" data-index="${index}">
       <div class="mapping-info">
-        <div class="mapping-local">${mapping.localPath}</div>
+        <div class="mapping-local">${mapping.localPath} ${excludeText}</div>
         <div class="mapping-drive">${mapping.driveName || 'My Drive'}</div>
       </div>
       <div class="mapping-actions">
-        <button class="btn-icon delete" title="Remove mapping" data-action="delete">
+        <button class="btn-icon" title="Manage exclusions" data-action="exclude">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" transform="rotate(45 8 8)"/>
+          </svg>
+        </button>
+        <button class="btn-icon delete-drive" title="Delete from Google Drive" data-action="delete-drive">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="btn-icon delete" title="Stop watching (keep on Drive)" data-action="delete">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M4 4l8 8M4 12l8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
-  // Add event listeners to delete buttons
-  mappingsList.querySelectorAll('.btn-icon.delete').forEach(btn => {
+  // Add event listeners
+  mappingsList.querySelectorAll('.btn-icon').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const item = e.target.closest('.mapping-item');
       const index = parseInt(item.dataset.index);
-      deleteMapping(index);
+      const action = e.target.closest('button').dataset.action;
+
+      if (action === 'delete') {
+        deleteMapping(index);
+      } else if (action === 'delete-drive') {
+        deleteFromDrive(index);
+      } else if (action === 'exclude') {
+        openExclusionModal(index);
+      }
     });
   });
 }
@@ -106,6 +127,98 @@ async function deleteMapping(index) {
   settings.folderMappings.splice(index, 1);
   await window.api.saveSettings({ folderMappings: settings.folderMappings });
   renderMappings();
+}
+
+async function deleteFromDrive(index) {
+  const mapping = settings.folderMappings[index];
+  if (!mapping) return;
+
+  const confirmDelete = confirm(
+    `Delete "${mapping.driveName}" from Google Drive?\n\n` +
+    `This will move the folder to your Google Drive trash.\n` +
+    `You can restore it from trash within 30 days.`
+  );
+
+  if (!confirmDelete) return;
+
+  const result = await window.api.deleteFromDrive(mapping.localPath, mapping.driveId);
+
+  if (result.success) {
+    settings.folderMappings.splice(index, 1);
+    renderMappings();
+    alert('Folder moved to Google Drive trash.');
+  } else {
+    alert('Failed to delete: ' + result.error);
+  }
+}
+
+// Exclusion management
+let currentExclusionIndex = null;
+
+async function openExclusionModal(index) {
+  currentExclusionIndex = index;
+  const mapping = settings.folderMappings[index];
+
+  const modal = document.getElementById('exclusionModal');
+  const folderName = document.getElementById('exclusionFolderName');
+  const subfolderList = document.getElementById('subfolderList');
+
+  folderName.textContent = mapping.localPath;
+
+  // Load subfolders
+  subfolderList.innerHTML = '<div class="loading">Loading subfolders...</div>';
+  modal.classList.remove('hidden');
+
+  const result = await window.api.getSubfolders(mapping.localPath);
+
+  if (result.success) {
+    const excludePaths = (mapping.excludePaths || []).map(p => p.toLowerCase());
+
+    if (result.subfolders.length === 0) {
+      subfolderList.innerHTML = '<div class="empty-state"><p>No subfolders found.</p></div>';
+    } else {
+      subfolderList.innerHTML = result.subfolders.map(folder => {
+        const isExcluded = excludePaths.includes(folder.toLowerCase());
+        return `
+          <label class="subfolder-item ${isExcluded ? 'excluded' : ''}">
+            <input type="checkbox" ${isExcluded ? 'checked' : ''} data-folder="${folder}">
+            <span class="folder-name">${folder}</span>
+            <span class="folder-status">${isExcluded ? 'Excluded' : 'Syncing'}</span>
+          </label>
+        `;
+      }).join('');
+
+      // Add event listeners
+      subfolderList.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', async (e) => {
+          const folder = e.target.dataset.folder;
+          const item = e.target.closest('.subfolder-item');
+
+          if (e.target.checked) {
+            await window.api.addExclusion(mapping.localPath, folder);
+            item.classList.add('excluded');
+            item.querySelector('.folder-status').textContent = 'Excluded';
+          } else {
+            await window.api.removeExclusion(mapping.localPath, folder);
+            item.classList.remove('excluded');
+            item.querySelector('.folder-status').textContent = 'Syncing';
+          }
+
+          // Update local settings
+          settings = await window.api.getSettings();
+          renderMappings();
+        });
+      });
+    }
+  } else {
+    subfolderList.innerHTML = '<div class="empty-state"><p>Failed to load subfolders.</p></div>';
+  }
+}
+
+function closeExclusionModal() {
+  const modal = document.getElementById('exclusionModal');
+  modal.classList.add('hidden');
+  currentExclusionIndex = null;
 }
 
 // Auth handlers
@@ -242,31 +355,27 @@ showNotifications.addEventListener('change', async () => {
   await window.api.saveSettings({ showNotifications: settings.showNotifications });
 });
 
-// Test sync handler
-testSyncBtn.addEventListener('click', async () => {
-  if (!settings.isAuthenticated) {
-    alert('Please sign in to Google Drive first.');
-    return;
-  }
-
-  const result = await window.api.selectLocalFolder();
-  if (result.success) {
-    testSyncBtn.disabled = true;
-    testSyncBtn.textContent = 'Syncing...';
-
-    await window.api.testSync(result.path);
-
-    testSyncBtn.disabled = false;
-    testSyncBtn.textContent = 'Select Folder & Sync';
-  }
-});
-
 // Close modal on outside click
 addMappingModal.addEventListener('click', (e) => {
   if (e.target === addMappingModal) {
     addMappingModal.classList.add('hidden');
   }
 });
+
+// Close exclusion modal on button click
+document.getElementById('closeExclusionBtn').addEventListener('click', closeExclusionModal);
+
+// Close exclusion modal on outside click
+document.getElementById('exclusionModal').addEventListener('click', (e) => {
+  if (e.target.id === 'exclusionModal') {
+    closeExclusionModal();
+  }
+});
+
+// Window controls
+document.getElementById('minimizeBtn').addEventListener('click', () => window.api.minimizeWindow());
+document.getElementById('maximizeBtn').addEventListener('click', () => window.api.maximizeWindow());
+document.getElementById('closeBtn').addEventListener('click', () => window.api.closeWindow());
 
 // Initialize app
 init();

@@ -306,10 +306,11 @@ if (!gotTheLock) {
     }
 
     mainWindow = new BrowserWindow({
-      width: 800,
-      height: 600,
-      minWidth: 600,
-      minHeight: 400,
+      width: 900,
+      height: 800,
+      minWidth: 700,
+      minHeight: 600,
+      frame: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -317,7 +318,7 @@ if (!gotTheLock) {
       },
       icon: path.join(__dirname, 'assets', 'icon.png'),
       title: 'RRightclickrr - Google Drive Sync',
-      backgroundColor: '#2C6E49'
+      backgroundColor: '#121212'
     });
 
     mainWindow.loadFile('src/ui/index.html');
@@ -666,6 +667,25 @@ if (!gotTheLock) {
     }
   });
 
+  // Window control IPC handlers
+  ipcMain.on('window-minimize', () => {
+    if (mainWindow) mainWindow.minimize();
+  });
+
+  ipcMain.on('window-maximize', () => {
+    if (mainWindow) {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize();
+      } else {
+        mainWindow.maximize();
+      }
+    }
+  });
+
+  ipcMain.on('window-close', () => {
+    if (mainWindow) mainWindow.close();
+  });
+
   // IPC Handlers
   ipcMain.handle('get-settings', () => {
     return {
@@ -772,12 +792,117 @@ if (!gotTheLock) {
     return { success: true };
   });
 
+  // === EXCLUSION HANDLERS ===
+
+  ipcMain.handle('add-exclusion', async (event, { localPath, excludePath }) => {
+    try {
+      // Update the watcher
+      if (folderWatcher) {
+        folderWatcher.addExclusion(localPath, excludePath);
+      }
+
+      // Update the stored mapping
+      const mappings = store.get('folderMappings') || [];
+      const mapping = mappings.find(m => m.localPath === localPath);
+      if (mapping) {
+        if (!mapping.excludePaths) {
+          mapping.excludePaths = [];
+        }
+        if (!mapping.excludePaths.includes(excludePath.toLowerCase())) {
+          mapping.excludePaths.push(excludePath.toLowerCase());
+        }
+        store.set('folderMappings', mappings);
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('remove-exclusion', async (event, { localPath, excludePath }) => {
+    try {
+      // Update the watcher
+      if (folderWatcher) {
+        folderWatcher.removeExclusion(localPath, excludePath);
+      }
+
+      // Update the stored mapping
+      const mappings = store.get('folderMappings') || [];
+      const mapping = mappings.find(m => m.localPath === localPath);
+      if (mapping && mapping.excludePaths) {
+        mapping.excludePaths = mapping.excludePaths.filter(
+          p => p.toLowerCase() !== excludePath.toLowerCase()
+        );
+        store.set('folderMappings', mappings);
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-subfolders', async (event, folderPath) => {
+    try {
+      const fs = require('fs');
+      const subfolders = [];
+
+      const items = fs.readdirSync(folderPath, { withFileTypes: true });
+      for (const item of items) {
+        if (item.isDirectory() && !item.name.startsWith('.')) {
+          subfolders.push(item.name);
+        }
+      }
+
+      return { success: true, subfolders };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // === DELETE FROM DRIVE HANDLER ===
+
+  ipcMain.handle('delete-from-drive', async (event, { localPath, driveId }) => {
+    try {
+      if (!googleAuth.isAuthenticated()) {
+        return { success: false, error: 'Not authenticated' };
+      }
+
+      // Move to trash (safer than permanent delete)
+      await driveUploader.trashFile(driveId);
+
+      // Remove from sync tracker
+      if (syncTracker) {
+        syncTracker.untrack(localPath);
+      }
+
+      // Remove from folder mappings
+      const mappings = store.get('folderMappings') || [];
+      const updated = mappings.filter(m => m.localPath !== localPath);
+      store.set('folderMappings', updated);
+
+      // Stop watching
+      if (folderWatcher) {
+        folderWatcher.unwatch(localPath);
+      }
+
+      updateTrayMenu();
+      updateTrayTooltip();
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
   app.whenReady().then(async () => {
     // Switch to proper logging directory
     initLogging(app);
 
     // Initialize Google Auth
     googleAuth = new GoogleAuth(store);
+    await googleAuth.loadTokens(); // Load saved tokens from keytar
     driveUploader = new DriveUploader(googleAuth);
     syncTracker = new SyncTracker();
 
@@ -827,7 +952,12 @@ if (!gotTheLock) {
     const mappings = store.get('folderMappings') || [];
     for (const mapping of mappings) {
       if (mapping.watching !== false) { // Default to watching
-        folderWatcher.watch(mapping.localPath, mapping.driveId, mapping.driveName);
+        folderWatcher.watch(
+          mapping.localPath,
+          mapping.driveId,
+          mapping.driveName,
+          mapping.excludePaths || []
+        );
       }
     }
 

@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // Window controls
+  minimizeWindow: () => ipcRenderer.send('window-minimize'),
+  maximizeWindow: () => ipcRenderer.send('window-maximize'),
+  closeWindow: () => ipcRenderer.send('window-close'),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
@@ -19,6 +24,14 @@ contextBridge.exposeInMainWorld('api', {
   unregisterContextMenu: () => ipcRenderer.invoke('unregister-context-menu'),
   isContextMenuRegistered: () => ipcRenderer.invoke('is-context-menu-registered'),
   restartExplorer: () => ipcRenderer.invoke('restart-explorer'),
+
+  // Exclusions
+  addExclusion: (localPath, excludePath) => ipcRenderer.invoke('add-exclusion', { localPath, excludePath }),
+  removeExclusion: (localPath, excludePath) => ipcRenderer.invoke('remove-exclusion', { localPath, excludePath }),
+  getSubfolders: (folderPath) => ipcRenderer.invoke('get-subfolders', folderPath),
+
+  // Delete from Drive
+  deleteFromDrive: (localPath, driveId) => ipcRenderer.invoke('delete-from-drive', { localPath, driveId }),
 
   // Events
   onSyncProgress: (callback) => {

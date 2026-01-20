@@ -191,6 +191,50 @@ class DriveUploader {
     });
     return response.data.webViewLink;
   }
+
+  /**
+   * Delete a file or folder from Google Drive
+   * @param {string} fileId - The ID of the file/folder to delete
+   * @returns {Promise<boolean>} - True if deleted successfully
+   */
+  async deleteFile(fileId) {
+    const drive = this.getDrive();
+    try {
+      await drive.files.delete({
+        fileId: fileId
+      });
+      return true;
+    } catch (error) {
+      // If file is already gone, that's fine
+      if (error.code === 404) {
+        return true;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Move a file/folder to trash instead of permanent delete
+   * @param {string} fileId - The ID of the file/folder to trash
+   * @returns {Promise<boolean>} - True if trashed successfully
+   */
+  async trashFile(fileId) {
+    const drive = this.getDrive();
+    try {
+      await drive.files.update({
+        fileId: fileId,
+        requestBody: {
+          trashed: true
+        }
+      });
+      return true;
+    } catch (error) {
+      if (error.code === 404) {
+        return true;
+      }
+      throw error;
+    }
+  }
 }
 
 module.exports = { DriveUploader };

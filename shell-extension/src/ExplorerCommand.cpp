@@ -1,6 +1,7 @@
 // RRightclickrr IExplorerCommand Implementation
 
 #include "ExplorerCommand.h"
+#include "resource.h"
 #include <strsafe.h>
 #include <pathcch.h>
 #include <shellapi.h>
@@ -73,7 +74,7 @@ IFACEMETHODIMP CExplorerCommand::GetIcon(IShellItemArray *psiItemArray, LPWSTR *
 {
     UNREFERENCED_PARAMETER(psiItemArray);
 
-    // Get the path to the icon file
+    // Get the DLL path for icon resource reference
     WCHAR szDllPath[MAX_PATH];
     if (GetModuleFileNameW(g_hModule, szDllPath, ARRAYSIZE(szDllPath)) == 0)
     {
@@ -81,27 +82,26 @@ IFACEMETHODIMP CExplorerCommand::GetIcon(IShellItemArray *psiItemArray, LPWSTR *
         return E_FAIL;
     }
 
-    // Remove DLL filename to get shell-extension directory
-    PathCchRemoveFileSpec(szDllPath, ARRAYSIZE(szDllPath));
-    // Go up one level to install root
-    PathCchRemoveFileSpec(szDllPath, ARRAYSIZE(szDllPath));
-
-    // Build path to the icon file based on command type
-    WCHAR szIcon[MAX_PATH];
+    // Get the icon resource ID based on command type
+    int iconResourceId;
     switch (m_type)
     {
     case CommandType::SyncToDrive:
-        PathCchCombine(szIcon, ARRAYSIZE(szIcon), szDllPath, L"resources\\assets\\sync-icon.ico");
+        iconResourceId = IDI_SYNC_ICON;
         break;
     case CommandType::CopyToDrive:
-        PathCchCombine(szIcon, ARRAYSIZE(szIcon), szDllPath, L"resources\\assets\\copy-icon.ico");
+        iconResourceId = IDI_COPY_ICON;
         break;
     case CommandType::GetDriveURL:
-        PathCchCombine(szIcon, ARRAYSIZE(szIcon), szDllPath, L"resources\\assets\\link-icon.ico");
+        iconResourceId = IDI_LINK_ICON;
         break;
     default:
-        PathCchCombine(szIcon, ARRAYSIZE(szIcon), szDllPath, L"resources\\assets\\sync-icon.ico");
+        iconResourceId = IDI_SYNC_ICON;
     }
+
+    // Format as "dllpath,-resourceID" which is what Windows shell expects
+    WCHAR szIcon[MAX_PATH + 16];
+    StringCchPrintfW(szIcon, ARRAYSIZE(szIcon), L"%s,-%d", szDllPath, iconResourceId);
 
     return SHStrDupW(szIcon, ppszIcon);
 }

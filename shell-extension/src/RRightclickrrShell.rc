@@ -1,0 +1,7 @@
+// Resource script for RRightclickrr Shell Extension
+#include "resource.h"
+
+// Icons - these will be copied from assets during build
+IDI_SYNC_ICON    ICON    "..\\..\\assets\\sync-icon.ico"
+IDI_COPY_ICON    ICON    "..\\..\\assets\\copy-icon.ico"
+IDI_LINK_ICON    ICON    "..\\..\\assets\\link-icon.ico"

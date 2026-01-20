@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
-project(RRightclickrrShell VERSION 1.1.0 LANGUAGES CXX)
+project(RRightclickrrShell VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Create the DLL
+# Create the DLL with embedded icon resources
 add_library(RRightclickrrShell SHARED
     src/dllmain.cpp
     src/ExplorerCommand.cpp
     src/ExplorerCommand.h
+    src/resource.h
+    src/RRightclickrrShell.rc
     RRightclickrrShell.def
 )
 

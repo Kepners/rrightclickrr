@@ -13,8 +13,8 @@
 // Forward declaration
 class CEnumExplorerCommand;
 
-// Helper to get icon path
-static HRESULT GetIconPath(LPWSTR pszPath, DWORD cchPath)
+// Helper to get icon path for a specific icon name
+static HRESULT GetIconPathForName(LPWSTR pszPath, DWORD cchPath, LPCWSTR iconName)
 {
     WCHAR szDllPath[MAX_PATH];
     if (GetModuleFileNameW(g_hModule, szDllPath, ARRAYSIZE(szDllPath)) == 0)
@@ -23,10 +23,15 @@ static HRESULT GetIconPath(LPWSTR pszPath, DWORD cchPath)
     HRESULT hr = PathCchRemoveFileSpec(szDllPath, ARRAYSIZE(szDllPath));
     if (FAILED(hr)) return hr;
 
+    // Go up one level from shell-extension folder
     hr = PathCchRemoveFileSpec(szDllPath, ARRAYSIZE(szDllPath));
     if (FAILED(hr)) return hr;
 
-    return PathCchCombine(pszPath, cchPath, szDllPath, L"assets\\rrightclickrr.ico");
+    // Build path: resources\assets\<iconName>.ico
+    WCHAR szIconRelPath[MAX_PATH];
+    StringCchPrintfW(szIconRelPath, ARRAYSIZE(szIconRelPath), L"resources\\assets\\%s.ico", iconName);
+
+    return PathCchCombine(pszPath, cchPath, szDllPath, szIconRelPath);
 }
 
 // Enumerator for subcommands
@@ -173,8 +178,27 @@ IFACEMETHODIMP CExplorerCommand::GetIcon(IShellItemArray *psiItemArray, LPWSTR *
 {
     UNREFERENCED_PARAMETER(psiItemArray);
 
+    LPCWSTR iconName;
+    switch (m_type)
+    {
+    case CommandType::RootMenu:
+        iconName = L"rrightclickrr";
+        break;
+    case CommandType::SyncToDrive:
+        iconName = L"sync-icon";
+        break;
+    case CommandType::CopyToDrive:
+        iconName = L"copy-icon";
+        break;
+    case CommandType::GetDriveURL:
+        iconName = L"link-icon";
+        break;
+    default:
+        iconName = L"rrightclickrr";
+    }
+
     WCHAR szIconPath[MAX_PATH];
-    HRESULT hr = GetIconPath(szIconPath, ARRAYSIZE(szIconPath));
+    HRESULT hr = GetIconPathForName(szIconPath, ARRAYSIZE(szIconPath), iconName);
     if (FAILED(hr))
     {
         *ppszIcon = nullptr;

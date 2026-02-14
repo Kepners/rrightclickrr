@@ -124,6 +124,59 @@ if (!gotTheLock) {
     }
   });
 
+  function normalizeLocalPath(p) {
+    return path.normalize(p).toLowerCase();
+  }
+
+  function normalizeExcludePaths(paths = []) {
+    return [...paths].map(p => p.toLowerCase()).sort();
+  }
+
+  function areExclusionsEqual(a = [], b = []) {
+    const left = normalizeExcludePaths(a);
+    const right = normalizeExcludePaths(b);
+    if (left.length !== right.length) return false;
+    return left.every((item, idx) => item === right[idx]);
+  }
+
+  function syncWatchersWithMappings(nextMappings = []) {
+    if (!folderWatcher) return;
+
+    const watchedFolders = folderWatcher.getWatchedFolders();
+
+    // Stop watchers for removed/disabled entries.
+    for (const watched of watchedFolders) {
+      const matching = nextMappings.find(m => normalizeLocalPath(m.localPath) === normalizeLocalPath(watched.localPath));
+      if (!matching || matching.watching === false) {
+        folderWatcher.unwatch(watched.localPath);
+      }
+    }
+
+    // Start/update watchers for active mappings.
+    for (const mapping of nextMappings) {
+      if (mapping.watching === false) continue;
+
+      const watched = folderWatcher.getWatchedFolders().find(w => normalizeLocalPath(w.localPath) === normalizeLocalPath(mapping.localPath));
+      const driveName = mapping.driveName || path.basename(mapping.localPath);
+      const nextExclusions = mapping.excludePaths || [];
+
+      if (!watched) {
+        folderWatcher.watch(mapping.localPath, mapping.driveId, driveName, nextExclusions);
+        continue;
+      }
+
+      const needsRestart =
+        watched.driveId !== mapping.driveId ||
+        watched.driveName !== driveName ||
+        !areExclusionsEqual(watched.excludePaths || [], nextExclusions);
+
+      if (needsRestart) {
+        folderWatcher.unwatch(watched.localPath);
+        folderWatcher.watch(mapping.localPath, mapping.driveId, driveName, nextExclusions);
+      }
+    }
+  }
+
   function createTray() {
     // Use PNG for tray (works on all platforms, ICO can have size issues)
     const isPackaged = app.isPackaged;
@@ -395,6 +448,12 @@ if (!gotTheLock) {
 
     try {
       const folderSync = new FolderSync(driveUploader, store, logDir);
+      const existingMapping = (store.get('folderMappings') || []).find(
+        m => normalizeLocalPath(m.localPath) === normalizeLocalPath(folderPath)
+      );
+      if (existingMapping?.excludePaths?.length) {
+        folderSync.setExcludePaths(existingMapping.excludePaths);
+      }
       currentSync = folderSync; // Track for cancellation
       const result = await folderSync.syncFolder(folderPath, (progress) => {
         // Update progress window
@@ -441,11 +500,18 @@ if (!gotTheLock) {
             driveName: path.basename(folderPath),
             watching: true
           });
-          store.set('folderMappings', mappings);
+        } else {
+          mappings[existingIndex] = {
+            ...mappings[existingIndex],
+            driveId: result.folderId,
+            driveName: path.basename(folderPath),
+            watching: true
+          };
         }
+        store.set('folderMappings', mappings);
+        syncWatchersWithMappings(mappings);
 
         // Start watching this folder
-        folderWatcher.watch(folderPath, result.folderId, path.basename(folderPath));
         updateTrayTooltip();
       }
 
@@ -485,6 +551,12 @@ if (!gotTheLock) {
 
     try {
       const folderSync = new FolderSync(driveUploader, store, logDir);
+      const existingMapping = (store.get('folderMappings') || []).find(
+        m => normalizeLocalPath(m.localPath) === normalizeLocalPath(folderPath)
+      );
+      if (existingMapping?.excludePaths?.length) {
+        folderSync.setExcludePaths(existingMapping.excludePaths);
+      }
       currentSync = folderSync; // Track for cancellation
       const result = await folderSync.syncFolder(folderPath, (progress) => {
         if (progressWindow) {
@@ -615,15 +687,10 @@ if (!gotTheLock) {
       const flagIndex = args.indexOf(flag);
       if (flagIndex === -1) return null;
 
-      // Look for the next argument that looks like a path (not a flag)
+      // Return the first non-flag argument after the flag.
       for (let i = flagIndex + 1; i < args.length; i++) {
         const arg = args[i];
-        if (arg && !arg.startsWith('--') && !arg.startsWith('-')) {
-          // Skip the app directory path, look for actual folder paths
-          if (arg.includes(':\\') && !arg.includes('node_modules') && !arg.includes('rrightclickrr\\node_modules')) {
-            return arg;
-          }
-        }
+        if (arg && !arg.startsWith('--') && !arg.startsWith('-')) return arg;
       }
       return null;
     }
@@ -635,10 +702,24 @@ if (!gotTheLock) {
       return;
     }
 
+    // Legacy flag support for older shell extension builds
+    const legacySyncPath = findPathAfterFlag(argv, '--sync');
+    if (legacySyncPath) {
+      handleFolderUpload(legacySyncPath);
+      return;
+    }
+
     // Look for --copy-folder argument (upload only, no watching)
     const copyPath = findPathAfterFlag(argv, '--copy-folder');
     if (copyPath) {
       handleCopyToGdrive(copyPath);
+      return;
+    }
+
+    // Legacy flag support for older shell extension builds
+    const legacyCopyPath = findPathAfterFlag(argv, '--copy');
+    if (legacyCopyPath) {
+      handleCopyToGdrive(legacyCopyPath);
       return;
     }
 
@@ -699,6 +780,8 @@ if (!gotTheLock) {
   ipcMain.handle('save-settings', (event, settings) => {
     if (settings.folderMappings !== undefined) {
       store.set('folderMappings', settings.folderMappings);
+      syncWatchersWithMappings(settings.folderMappings);
+      updateTrayTooltip();
     }
     if (settings.autoUpload !== undefined) {
       store.set('autoUpload', settings.autoUpload);
@@ -707,6 +790,18 @@ if (!gotTheLock) {
       store.set('showNotifications', settings.showNotifications);
     }
     return true;
+  });
+
+  ipcMain.handle('stop-watching', async (event, { localPath }) => {
+    try {
+      if (folderWatcher) {
+        folderWatcher.unwatch(localPath);
+      }
+      updateTrayTooltip();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   });
 
   ipcMain.handle('authenticate', async () => {
@@ -874,7 +969,7 @@ if (!gotTheLock) {
 
       // Remove from sync tracker
       if (syncTracker) {
-        syncTracker.untrack(localPath);
+        syncTracker.untrackUnderPath(localPath);
       }
 
       // Remove from folder mappings
@@ -915,6 +1010,10 @@ if (!gotTheLock) {
         safeLog('Skipping auto-sync - not authenticated');
         return;
       }
+      if (!store.get('autoUpload')) {
+        safeLog('Skipping auto-sync - autoUpload disabled');
+        return;
+      }
 
       const { filePath, driveId, driveName, relativePath, type } = data;
 
@@ -924,8 +1023,23 @@ if (!gotTheLock) {
       }
 
       try {
-        // Upload the single file
-        await driveUploader.uploadFile(filePath, driveId);
+        // Keep folder structure in Drive for changed files.
+        let targetParentId = driveId;
+        const relativeDir = path.dirname(relativePath);
+        if (relativeDir && relativeDir !== '.') {
+          targetParentId = await driveUploader.ensureFolderPath(relativeDir, driveId);
+        }
+
+        const uploaded = await driveUploader.uploadFile(filePath, targetParentId);
+
+        if (syncTracker && uploaded?.id) {
+          syncTracker.trackSync(
+            filePath,
+            uploaded.id,
+            uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+            'file'
+          );
+        }
 
         if (store.get('showNotifications')) {
           showNotification('File Synced', `${relativePath} uploaded to ${driveName}`);
@@ -939,6 +1053,27 @@ if (!gotTheLock) {
       updateTrayTooltip();
     });
 
+    folderWatcher.on('file-deleted', async (data) => {
+      const { filePath, relativePath, driveName } = data;
+      const tracked = syncTracker ? syncTracker.getSyncInfo(filePath) : null;
+
+      if (tracked?.driveId && googleAuth.isAuthenticated()) {
+        try {
+          await driveUploader.trashFile(tracked.driveId);
+        } catch (error) {
+          safeLog('Failed to trash deleted file in Drive:', error.message);
+        }
+      }
+
+      if (syncTracker) {
+        syncTracker.untrack(filePath);
+      }
+
+      if (tracked && store.get('showNotifications')) {
+        showNotification('File Removed', `${relativePath} removed from ${driveName}`);
+      }
+    });
+
     folderWatcher.on('watching', (data) => {
       safeLog('Now watching:', data.localPath);
       updateTrayTooltip();
@@ -950,16 +1085,7 @@ if (!gotTheLock) {
 
     // Start watching existing folder mappings
     const mappings = store.get('folderMappings') || [];
-    for (const mapping of mappings) {
-      if (mapping.watching !== false) { // Default to watching
-        folderWatcher.watch(
-          mapping.localPath,
-          mapping.driveId,
-          mapping.driveName,
-          mapping.excludePaths || []
-        );
-      }
-    }
+    syncWatchersWithMappings(mappings);
 
     createTray();
 

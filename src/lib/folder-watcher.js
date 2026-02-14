@@ -45,6 +45,7 @@ class FolderWatcher extends EventEmitter {
 
     watcher.on('add', (filePath) => this.handleChange('add', filePath, localPath, driveId, driveName));
     watcher.on('change', (filePath) => this.handleChange('change', filePath, localPath, driveId, driveName));
+    watcher.on('unlink', (filePath) => this.handleDelete(filePath, localPath, driveId, driveName));
     watcher.on('error', (error) => this.emit('error', { localPath, error }));
 
     this.watchers.set(localPath, { watcher, driveId, driveName });
@@ -79,6 +80,23 @@ class FolderWatcher extends EventEmitter {
     }, this.debounceMs);
 
     this.pendingChanges.set(filePath, timeout);
+  }
+
+  /**
+   * Handle file deletion
+   */
+  handleDelete(filePath, localPath, driveId, driveName) {
+    if (this.isExcluded(filePath, localPath)) {
+      return;
+    }
+
+    this.emit('file-deleted', {
+      filePath,
+      localPath,
+      driveId,
+      driveName,
+      relativePath: path.relative(localPath, filePath)
+    });
   }
 
   /**

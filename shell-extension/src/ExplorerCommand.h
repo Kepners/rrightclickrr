@@ -8,7 +8,8 @@
 
 enum class CommandType
 {
-    RootMenu,      // Parent menu with icon
+    RootMenuFolder, // Parent menu for directory selection
+    RootMenuFile,   // Parent menu for file selection
     SyncToDrive,
     CopyToDrive,
     GetDriveURL

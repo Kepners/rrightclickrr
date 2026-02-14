@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(RRightclickrrShell VERSION 1.2.0 LANGUAGES CXX)
+project(RRightclickrrShell VERSION 1.2.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +9,8 @@ add_library(RRightclickrrShell SHARED
     src/dllmain.cpp
     src/ExplorerCommand.cpp
     src/ExplorerCommand.h
+    src/SyncOverlay.cpp
+    src/SyncOverlay.h
     src/resource.h
     src/RRightclickrrShell.rc
     RRightclickrrShell.def

@@ -5,11 +5,12 @@ const crypto = require('crypto');
 
 const SERVICE_NAME = 'RRightclickrr';
 const ACCOUNT_NAME = 'google-oauth-tokens';
+const CALLBACK_PORT = 8234;
 
 // You'll need to create these at console.cloud.google.com
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const REDIRECT_URI = 'http://localhost:8234/oauth2callback';
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/oauth2callback`;
 
 const SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
@@ -32,10 +33,13 @@ class GoogleAuth {
     );
 
     this.oauth2Client.on('tokens', (tokens) => {
-      if (tokens.refresh_token) {
-        this.saveTokens(tokens);
-      }
-      this.tokens = tokens;
+      // Token refresh events can omit refresh_token. Preserve existing token fields.
+      const mergedTokens = { ...(this.tokens || {}), ...(tokens || {}) };
+      this.tokens = mergedTokens;
+      this.oauth2Client.setCredentials(mergedTokens);
+      this.saveTokens(mergedTokens).catch(() => {
+        // Failed to persist refreshed tokens - ignore silently
+      });
     });
   }
 
@@ -94,10 +98,21 @@ class GoogleAuth {
   }
 
   isAuthenticated() {
-    return this.tokens !== null && this.tokens.access_token !== undefined;
+    return !!(this.tokens && (this.tokens.access_token || this.tokens.refresh_token));
+  }
+
+  isInvalidGrantError(error) {
+    if (!error) return false;
+    const message = `${error.message || ''}`.toLowerCase();
+    const status = error.code || error.status;
+    return status === 400 || status === 401 || message.includes('invalid_grant') || message.includes('unauthorized_client');
   }
 
   async authenticate() {
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      throw new Error('Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.');
+    }
+
     // Try to load existing tokens first
     const hasTokens = await this.loadTokens();
     if (hasTokens && this.isAuthenticated()) {
@@ -106,18 +121,26 @@ class GoogleAuth {
         await this.oauth2Client.getAccessToken();
         return true;
       } catch (error) {
-        // Tokens expired, need to re-auth
-        await this.clearTokens();
+        // Only clear stored tokens for true auth failures.
+        if (this.isInvalidGrantError(error)) {
+          await this.clearTokens();
+        } else {
+          throw new Error(`Unable to validate saved Google session: ${error.message}`);
+        }
       }
     }
 
     // Start OAuth flow
     return new Promise((resolve, reject) => {
-      const authUrl = this.oauth2Client.generateAuthUrl({
+      const authParams = {
         access_type: 'offline',
         scope: SCOPES,
-        prompt: 'consent'
-      });
+        include_granted_scopes: true
+      };
+      if (!this.tokens?.refresh_token) {
+        authParams.prompt = 'consent';
+      }
+      const authUrl = this.oauth2Client.generateAuthUrl(authParams);
 
       const authWindow = new BrowserWindow({
         width: 600,
@@ -132,6 +155,23 @@ class GoogleAuth {
       // Create local server to handle callback
       const http = require('http');
       const url = require('url');
+      let settled = false;
+
+      const finishSuccess = () => {
+        if (settled) return;
+        settled = true;
+        try { authWindow.close(); } catch {}
+        try { server.close(); } catch {}
+        resolve(true);
+      };
+
+      const finishError = (error) => {
+        if (settled) return;
+        settled = true;
+        try { authWindow.close(); } catch {}
+        try { server.close(); } catch {}
+        reject(error);
+      };
 
       const server = http.createServer(async (req, res) => {
         const queryParams = url.parse(req.url, true).query;
@@ -153,13 +193,9 @@ class GoogleAuth {
             const { tokens } = await this.oauth2Client.getToken(queryParams.code);
             this.oauth2Client.setCredentials(tokens);
             await this.saveTokens(tokens);
-            authWindow.close();
-            server.close();
-            resolve(true);
+            finishSuccess();
           } catch (error) {
-            authWindow.close();
-            server.close();
-            reject(error);
+            finishError(error);
           }
         } else if (queryParams.error) {
           res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -173,18 +209,22 @@ class GoogleAuth {
               </body>
             </html>
           `);
-          authWindow.close();
-          server.close();
-          reject(new Error(queryParams.error));
+          finishError(new Error(queryParams.error));
         }
       });
 
-      server.listen(8234, () => {
+      server.on('error', (error) => {
+        finishError(error);
+      });
+
+      server.listen(CALLBACK_PORT, () => {
         authWindow.loadURL(authUrl);
       });
 
       authWindow.on('closed', () => {
-        server.close();
+        if (!settled) {
+          finishError(new Error('Sign in was cancelled.'));
+        }
       });
     });
   }

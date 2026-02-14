@@ -13,7 +13,7 @@
   <Identity
     Name="Kepners.RRightclickrr"
     Publisher="CN=Kepners"
-    Version="1.2.3.0"
+    Version="1.2.5.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -53,9 +53,19 @@
         <com:Extension Category="windows.comServer">
           <com:ComServer>
             <com:SurrogateServer DisplayName="RRightclickrr Context Menu">
-              <!-- Root Menu (parent with subcommands) -->
+              <!-- Root Menu (folder) -->
               <com:Class
                 Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A"
+                Path="shell-extension\RRightclickrrShell.dll"
+                ThreadingModel="STA" />
+              <!-- Root Menu (file) -->
+              <com:Class
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6E"
+                Path="shell-extension\RRightclickrrShell.dll"
+                ThreadingModel="STA" />
+              <!-- Synced overlay icon handler -->
+              <com:Class
+                Id="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F"
                 Path="shell-extension\RRightclickrrShell.dll"
                 ThreadingModel="STA" />
             </com:SurrogateServer>
@@ -71,7 +81,7 @@
             </desktop5:ItemType>
             <!-- Show on all files -->
             <desktop5:ItemType Type="*">
-              <desktop5:Verb Id="RRightclickrr" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6A" />
+              <desktop5:Verb Id="RRightclickrr" Clsid="7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6E" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

@@ -1,5 +1,9 @@
 const { exec } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const { app } = require('electron');
+
+const OVERLAY_CLSID = '{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}';
 
 async function runPowerShell(script) {
   return new Promise((resolve, reject) => {
@@ -10,63 +14,137 @@ async function runPowerShell(script) {
   });
 }
 
-async function registerContextMenu() {
-  const electronPath = process.execPath;
-  const appPath = path.join(__dirname, '..', '..');
-  const syncIconPath = path.join(appPath, 'assets', 'sync-icon.ico');
-  const linkIconPath = path.join(appPath, 'assets', 'link-icon.ico');
-  const copyIconPath = path.join(appPath, 'assets', 'copy-icon.ico');
+function getRuntimeContext() {
+  const isPackaged = app.isPackaged;
+  const executable = process.execPath;
+  const appRoot = isPackaged ? path.dirname(executable) : path.join(__dirname, '..', '..');
+  const assetsPath = isPackaged ? path.join(process.resourcesPath, 'assets') : path.join(appRoot, 'assets');
+  return { isPackaged, executable, appRoot, assetsPath };
+}
 
-  // Commands
-  const syncCmd = `"${electronPath}" "${appPath}" --sync-folder "%V"`;
-  const copyCmd = `"${electronPath}" "${appPath}" --copy-folder "%V"`;
-  const getUrlCmd = `"${electronPath}" "${appPath}" --get-url "%V"`;
-  const getUrlFileCmd = `"${electronPath}" "${appPath}" --get-url "%1"`;
-  const openDriveCmd = `"${electronPath}" "${appPath}" --open-drive "%V"`;
-  const openDriveFileCmd = `"${electronPath}" "${appPath}" --open-drive "%1"`;
+function buildCommand(flag, shellArg) {
+  const { isPackaged, executable, appRoot } = getRuntimeContext();
+  if (isPackaged) {
+    return `"${executable}" ${flag} "${shellArg}"`;
+  }
+  // Dev mode launches Electron with the app directory as first argument.
+  return `"${executable}" "${appRoot}" ${flag} "${shellArg}"`;
+}
+
+function getShellExtensionPath() {
+  const { isPackaged, appRoot } = getRuntimeContext();
+  if (isPackaged) {
+    return path.join(appRoot, 'shell-extension', 'RRightclickrrShell.dll');
+  }
+
+  const devDistDll = path.join(appRoot, 'shell-extension', 'dist', 'RRightclickrrShell.dll');
+  if (fs.existsSync(devDistDll)) {
+    return devDistDll;
+  }
+
+  return path.join(appRoot, 'shell-extension', 'RRightclickrrShell.dll');
+}
+
+async function registerContextMenu() {
+  const { assetsPath } = getRuntimeContext();
+  const shellExtensionPath = getShellExtensionPath();
+  const syncIconPath = path.join(assetsPath, 'sync-icon.ico');
+  const copyIconPath = path.join(assetsPath, 'copy-icon.ico');
+  const linkIconPath = path.join(assetsPath, 'link-icon.ico');
+
+  const syncCmd = buildCommand('--sync-folder', '%V');
+  const copyCmd = buildCommand('--copy-folder', '%V');
+  const openDriveCmd = buildCommand('--open-drive', '%V');
+  const getUrlCmd = buildCommand('--get-url', '%V');
+  const openDriveFileCmd = buildCommand('--open-drive', '%1');
+  const getUrlFileCmd = buildCommand('--get-url', '%1');
+  const escapedShellExtensionPath = shellExtensionPath.replace(/\\/g, '\\\\').replace(/'/g, "''");
 
   const script = `
-    # Sync to Google Drive (folders only - upload + watch for changes)
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive' -Name '(Default)' -Value 'Sync to Google Drive'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive' -Name 'Icon' -Value '${syncIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive\\command' -Name '(Default)' -Value '${syncCmd.replace(/'/g, "''")}'
+    # Refresh overlay handler registration
+    Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ShellIconOverlayIdentifiers\\ RRightclickrrSynced' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}' -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Copy to Google Drive (folders only - one-time upload, no watching)
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive' -Name '(Default)' -Value 'Copy to Google Drive'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive' -Name 'Icon' -Value '${copyIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive\\command' -Name '(Default)' -Value '${copyCmd.replace(/'/g, "''")}'
+    if (Test-Path '${escapedShellExtensionPath}') {
+      New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}' -Force | Out-Null
+      Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}' -Name '(Default)' -Value 'RRightclickrr Sync Overlay'
+      New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}\\InprocServer32' -Force | Out-Null
+      Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}\\InprocServer32' -Name '(Default)' -Value '${escapedShellExtensionPath}'
+      Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}\\InprocServer32' -Name 'ThreadingModel' -Value 'Apartment'
+      New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ShellIconOverlayIdentifiers\\ RRightclickrrSynced' -Force | Out-Null
+      Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ShellIconOverlayIdentifiers\\ RRightclickrrSynced' -Name '(Default)' -Value '${OVERLAY_CLSID}'
+    }
 
-    # Open in Google Drive (folders)
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive' -Name '(Default)' -Value 'Open in Google Drive'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive\\command' -Name '(Default)' -Value '${openDriveCmd.replace(/'/g, "''")}'
+    # Remove old/legacy keys first
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink' -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Open in Google Drive (files)
-    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive' -Name '(Default)' -Value 'Open in Google Drive'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive\\command' -Name '(Default)' -Value '${openDriveFileCmd.replace(/'/g, "''")}'
+    # Directory entries
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive' -Name '(Default)' -Value 'Sync to Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive' -Name 'Icon' -Value '${syncIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive\\command' -Name '(Default)' -Value '${syncCmd.replace(/'/g, "''")}'
 
-    # Copy Google Drive Link (folders)
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink' -Name '(Default)' -Value 'Copy Google Drive Link'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink\\command' -Name '(Default)' -Value '${getUrlCmd.replace(/'/g, "''")}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive' -Name '(Default)' -Value 'Copy to Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive' -Name 'Icon' -Value '${copyIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive\\command' -Name '(Default)' -Value '${copyCmd.replace(/'/g, "''")}'
 
-    # Copy Google Drive Link (files)
-    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink' -Name '(Default)' -Value 'Copy Google Drive Link'
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
-    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink\\command' -Force | Out-Null
-    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink\\command' -Name '(Default)' -Value '${getUrlFileCmd.replace(/'/g, "''")}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive' -Name '(Default)' -Value 'Open in Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive\\command' -Name '(Default)' -Value '${openDriveCmd.replace(/'/g, "''")}'
+
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink' -Name '(Default)' -Value 'Copy Drive Link'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink\\command' -Name '(Default)' -Value '${getUrlCmd.replace(/'/g, "''")}'
+
+    # Background (inside folder empty space)
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive' -Name '(Default)' -Value 'Sync this folder to Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive' -Name 'Icon' -Value '${syncIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive\\command' -Name '(Default)' -Value '${syncCmd.replace(/'/g, "''")}'
+
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive' -Name '(Default)' -Value 'Copy this folder to Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive' -Name 'Icon' -Value '${copyIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive\\command' -Name '(Default)' -Value '${copyCmd.replace(/'/g, "''")}'
+
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive' -Name '(Default)' -Value 'Open this folder in Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive\\command' -Name '(Default)' -Value '${openDriveCmd.replace(/'/g, "''")}'
+
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink' -Name '(Default)' -Value 'Copy Drive Link'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink\\command' -Name '(Default)' -Value '${getUrlCmd.replace(/'/g, "''")}'
+
+    # File entries
+    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive' -Name '(Default)' -Value 'Open in Google Drive'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive\\command' -Name '(Default)' -Value '${openDriveFileCmd.replace(/'/g, "''")}'
+
+    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink' -Name '(Default)' -Value 'Copy Drive Link'
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink' -Name 'Icon' -Value '${linkIconPath.replace(/\\/g, '\\\\')}'
+    New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink\\command' -Force | Out-Null
+    Set-ItemProperty -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink\\command' -Name '(Default)' -Value '${getUrlFileCmd.replace(/'/g, "''")}'
   `;
 
   await runPowerShell(script);
@@ -74,17 +152,44 @@ async function registerContextMenu() {
 
 async function unregisterContextMenu() {
   const script = `
+    # Remove overlay icon handler keys
+    Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ShellIconOverlayIdentifiers\\ RRightclickrrSynced' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\${OVERLAY_CLSID}' -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Remove current keys
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_OpenDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_CopyLink' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_SyncDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_OpenDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\RR_CopyLink' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_OpenDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\RR_CopyLink' -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Remove legacy keys from older builds
     Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\CopyToGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\OpenInGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\shell\\GetDriveLink' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\OpenInGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\GetDriveLink' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'HKCU:\\Software\\Classes\\Directory\\Background\\shell\\SyncToGoogleDrive' -Recurse -Force -ErrorAction SilentlyContinue
   `;
   await runPowerShell(script);
 }
 
 async function isContextMenuRegistered() {
   try {
-    const result = await runPowerShell(`Test-Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive'`);
+    const result = await runPowerShell(`
+      if ((Test-Path 'HKCU:\\Software\\Classes\\Directory\\shell\\RR_SyncDrive') -or
+          (Test-Path 'HKCU:\\Software\\Classes\\Directory\\shell\\SyncToGoogleDrive')) {
+        Write-Output 'true'
+      } else {
+        Write-Output 'false'
+      }
+    `);
     return result.trim().toLowerCase() === 'true';
   } catch {
     return false;

@@ -1,5 +1,7 @@
 const Store = require('electron-store');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 class SyncTracker {
   constructor() {
@@ -9,6 +11,9 @@ class SyncTracker {
         syncedItems: {}
       }
     });
+
+    this.overlayIndexPath = path.join(this.getLocalAppDataPath(), 'RRightclickrr', 'synced-paths.txt');
+    this.persistSyncedPathIndex();
   }
 
   /**
@@ -31,6 +36,7 @@ class SyncTracker {
     };
 
     this.store.set('syncedItems', syncedItems);
+    this.persistSyncedPathIndex();
   }
 
   /**
@@ -82,6 +88,26 @@ class SyncTracker {
     const syncedItems = this.store.get('syncedItems');
     delete syncedItems[normalized];
     this.store.set('syncedItems', syncedItems);
+    this.persistSyncedPathIndex();
+  }
+
+  /**
+   * Remove sync tracking for a folder path and all children
+   * @param {string} localPath - Root folder path
+   */
+  untrackUnderPath(localPath) {
+    const normalizedRoot = this.normalizePath(localPath);
+    const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
+    const syncedItems = this.store.get('syncedItems');
+
+    for (const key of Object.keys(syncedItems)) {
+      if (key === normalizedRoot || key.startsWith(prefix)) {
+        delete syncedItems[key];
+      }
+    }
+
+    this.store.set('syncedItems', syncedItems);
+    this.persistSyncedPathIndex();
   }
 
   /**
@@ -98,6 +124,20 @@ class SyncTracker {
    */
   getAllSyncedPaths() {
     return Object.keys(this.store.get('syncedItems'));
+  }
+
+  getLocalAppDataPath() {
+    return process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  }
+
+  persistSyncedPathIndex() {
+    try {
+      const syncedPaths = this.getAllSyncedPaths();
+      fs.mkdirSync(path.dirname(this.overlayIndexPath), { recursive: true });
+      fs.writeFileSync(this.overlayIndexPath, syncedPaths.join('\n'), 'utf8');
+    } catch {
+      // Keep tracker writes non-fatal if index file update fails.
+    }
   }
 
   /**

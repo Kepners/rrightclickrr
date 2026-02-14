@@ -79,12 +79,19 @@ class FolderSync {
     const startTime = Date.now();
     const uploadedFiles = []; // Track all uploaded files with their Drive IDs
 
-    // Determine the Drive parent folder based on mappings or default
-    const driveParentId = await this.getDriveParentForPath(localFolderPath);
-
-    // Create the root folder in Drive
-    const rootFolder = await this.driveUploader.findOrCreateFolder(folderName, driveParentId);
-    const rootFolderId = rootFolder.id;
+    // Reuse exact mapping target if it already exists to avoid nested Folder/Folder creation.
+    const exactMapping = this.getExactMapping(localFolderPath);
+    let rootFolderId;
+    if (exactMapping?.driveId) {
+      rootFolderId = exactMapping.driveId;
+      this.log(`Using existing mapped Drive folder: ${rootFolderId}`);
+    } else {
+      // Determine the Drive parent folder based on mappings or default
+      const driveParentId = await this.getDriveParentForPath(localFolderPath);
+      // Create the root folder in Drive
+      const rootFolder = await this.driveUploader.findOrCreateFolder(folderName, driveParentId);
+      rootFolderId = rootFolder.id;
+    }
 
     // Upload all files maintaining structure
     for (const file of files) {
@@ -244,6 +251,12 @@ class FolderSync {
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  getExactMapping(localPath) {
+    const mappings = this.store.get('folderMappings') || [];
+    const normalized = path.normalize(localPath).toLowerCase();
+    return mappings.find(m => path.normalize(m.localPath).toLowerCase() === normalized) || null;
   }
 
   async getDriveParentForPath(localPath) {

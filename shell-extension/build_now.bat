@@ -2,9 +2,26 @@
 setlocal
 
 set CMAKE="C:\Program Files\CMake\bin\cmake.exe"
+set VSWHERE="C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+set VS_INSTALL=
+set VSDEVCMD=
 
 echo Setting up Visual Studio environment...
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" > nul 2>&1
+if exist %VSWHERE% (
+    for /f "usebackq delims=" %%i in (`%VSWHERE% -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_INSTALL=%%i
+)
+
+if not defined VS_INSTALL (
+    echo Could not find Visual Studio Build Tools with C++ workload.
+    exit /b 1
+)
+
+set VSDEVCMD=%VS_INSTALL%\Common7\Tools\VsDevCmd.bat
+call "%VSDEVCMD%" > nul 2>&1
+if %errorlevel% neq 0 (
+    echo Failed to initialize Visual Studio command environment.
+    exit /b 1
+)
 
 echo Changing to shell-extension directory...
 cd /d "c:\Users\kepne\OneDrive\Documents\GitHub\rrightclickrr\shell-extension"
@@ -15,7 +32,7 @@ mkdir build
 cd build
 
 echo Running CMake...
-%CMAKE% -G "Visual Studio 16 2019" -A x64 ..
+%CMAKE% -G "Visual Studio 17 2022" -A x64 ..
 if %errorlevel% neq 0 (
     echo CMake failed!
     pause

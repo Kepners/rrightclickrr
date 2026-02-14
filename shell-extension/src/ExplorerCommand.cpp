@@ -67,14 +67,14 @@ public:
         ULONG fetched = 0;
 
         // For folders: Sync, Copy, GetURL
-        // For files: Copy, GetURL
+        // For files: GetURL
         CommandType commands[] = {
             CommandType::SyncToDrive,
             CommandType::CopyToDrive,
             CommandType::GetDriveURL
         };
-        int startIdx = m_isFolder ? 0 : 1;  // Skip Sync for files
-        int totalCommands = m_isFolder ? 3 : 2;
+        int startIdx = m_isFolder ? 0 : 2;  // Files expose only GetURL
+        int totalCommands = m_isFolder ? 3 : 1;
 
         while (fetched < celt && (m_nCurrent - startIdx) < totalCommands)
         {
@@ -155,7 +155,8 @@ IFACEMETHODIMP CExplorerCommand::GetTitle(IShellItemArray *psiItemArray, LPWSTR 
     LPCWSTR title;
     switch (m_type)
     {
-    case CommandType::RootMenu:
+    case CommandType::RootMenuFolder:
+    case CommandType::RootMenuFile:
         title = L"RRightclickrr";
         break;
     case CommandType::SyncToDrive:
@@ -181,7 +182,8 @@ IFACEMETHODIMP CExplorerCommand::GetIcon(IShellItemArray *psiItemArray, LPWSTR *
     LPCWSTR iconName;
     switch (m_type)
     {
-    case CommandType::RootMenu:
+    case CommandType::RootMenuFolder:
+    case CommandType::RootMenuFile:
         iconName = L"rrightclickrr";
         break;
     case CommandType::SyncToDrive:
@@ -215,7 +217,8 @@ IFACEMETHODIMP CExplorerCommand::GetToolTip(IShellItemArray *psiItemArray, LPWST
     LPCWSTR tooltip;
     switch (m_type)
     {
-    case CommandType::RootMenu:
+    case CommandType::RootMenuFolder:
+    case CommandType::RootMenuFile:
         tooltip = L"Sync files and folders to Google Drive";
         break;
     case CommandType::SyncToDrive:
@@ -238,8 +241,11 @@ IFACEMETHODIMP CExplorerCommand::GetCanonicalName(GUID *pguidCommandName)
 {
     switch (m_type)
     {
-    case CommandType::RootMenu:
+    case CommandType::RootMenuFolder:
         *pguidCommandName = { 0x7b3b5e52, 0xa1f0, 0x4c5e, { 0x9b, 0x8a, 0x1c, 0x2d, 0x3e, 0x4f, 0x5a, 0x6a } };
+        break;
+    case CommandType::RootMenuFile:
+        *pguidCommandName = { 0x7b3b5e52, 0xa1f0, 0x4c5e, { 0x9b, 0x8a, 0x1c, 0x2d, 0x3e, 0x4f, 0x5a, 0x6e } };
         break;
     case CommandType::SyncToDrive:
         *pguidCommandName = { 0x7b3b5e52, 0xa1f0, 0x4c5e, { 0x9b, 0x8a, 0x1c, 0x2d, 0x3e, 0x4f, 0x5a, 0x6b } };
@@ -263,7 +269,7 @@ IFACEMETHODIMP CExplorerCommand::GetState(IShellItemArray *psiItemArray, BOOL fO
     if (psiItemArray == nullptr)
     {
         // Root menu should still show
-        if (m_type != CommandType::RootMenu)
+        if (m_type != CommandType::RootMenuFolder && m_type != CommandType::RootMenuFile)
             *pCmdState = ECS_HIDDEN;
         return S_OK;
     }
@@ -276,7 +282,7 @@ IFACEMETHODIMP CExplorerCommand::Invoke(IShellItemArray *psiItemArray, IBindCtx 
     UNREFERENCED_PARAMETER(pbc);
 
     // Root menu doesn't invoke - it has subcommands
-    if (m_type == CommandType::RootMenu)
+    if (m_type == CommandType::RootMenuFolder || m_type == CommandType::RootMenuFile)
         return S_OK;
 
     if (psiItemArray == nullptr)
@@ -296,10 +302,10 @@ IFACEMETHODIMP CExplorerCommand::Invoke(IShellItemArray *psiItemArray, IBindCtx 
     switch (m_type)
     {
     case CommandType::SyncToDrive:
-        StringCchPrintfW(szArgs, ARRAYSIZE(szArgs), L"--sync \"%s\"", szPath);
+        StringCchPrintfW(szArgs, ARRAYSIZE(szArgs), L"--sync-folder \"%s\"", szPath);
         break;
     case CommandType::CopyToDrive:
-        StringCchPrintfW(szArgs, ARRAYSIZE(szArgs), L"--copy \"%s\"", szPath);
+        StringCchPrintfW(szArgs, ARRAYSIZE(szArgs), L"--copy-folder \"%s\"", szPath);
         break;
     case CommandType::GetDriveURL:
         StringCchPrintfW(szArgs, ARRAYSIZE(szArgs), L"--get-url \"%s\"", szPath);
@@ -325,7 +331,7 @@ IFACEMETHODIMP CExplorerCommand::Invoke(IShellItemArray *psiItemArray, IBindCtx 
 
 IFACEMETHODIMP CExplorerCommand::GetFlags(EXPCMDFLAGS *pFlags)
 {
-    if (m_type == CommandType::RootMenu)
+    if (m_type == CommandType::RootMenuFolder || m_type == CommandType::RootMenuFile)
         *pFlags = ECF_HASSUBCOMMANDS;
     else
         *pFlags = ECF_DEFAULT;
@@ -334,15 +340,15 @@ IFACEMETHODIMP CExplorerCommand::GetFlags(EXPCMDFLAGS *pFlags)
 
 IFACEMETHODIMP CExplorerCommand::EnumSubCommands(IEnumExplorerCommand **ppEnum)
 {
-    if (m_type != CommandType::RootMenu)
+    if (m_type != CommandType::RootMenuFolder && m_type != CommandType::RootMenuFile)
     {
         *ppEnum = nullptr;
         return E_NOTIMPL;
     }
 
-    // Create enumerator - for now assume files (show Copy and GetURL)
-    // The actual filtering happens in GetState of child commands
-    *ppEnum = new (std::nothrow) CEnumExplorerCommand(true);
+    // Folder menus include Sync/Copy/GetURL; file menus include GetURL only.
+    const bool isFolderMenu = (m_type == CommandType::RootMenuFolder);
+    *ppEnum = new (std::nothrow) CEnumExplorerCommand(isFolderMenu);
     return *ppEnum ? S_OK : E_OUTOFMEMORY;
 }
 

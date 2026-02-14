@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Delete from Drive
   deleteFromDrive: (localPath, driveId) => ipcRenderer.invoke('delete-from-drive', { localPath, driveId }),
+  stopWatching: (localPath) => ipcRenderer.invoke('stop-watching', { localPath }),
 
   // Events
   onSyncProgress: (callback) => {

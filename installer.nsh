@@ -24,6 +24,14 @@
 
   SkipSparsePackage:
 
+  ; === SYNC OVERLAY ICON HANDLER ===
+  ; {7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}
+  DetailPrint "Registering sync overlay icon handler..."
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\CLSID\{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}" /ve /d "RRightclickrr Sync Overlay" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\CLSID\{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}\InprocServer32" /ve /d "$INSTDIR\shell-extension\RRightclickrrShell.dll" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\CLSID\{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}\InprocServer32" /v "ThreadingModel" /d "Apartment" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers\ RRightclickrrSynced" /ve /d "{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}" /f'
+
   ; === CLASSIC MENU (Registry - works on all Windows) ===
   DetailPrint "Registering classic context menu (Show more options)..."
 
@@ -42,6 +50,11 @@
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%V\"" /f'
 
+  ; FOLDER: Copy Drive Link
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyLink" /ve /d "Copy Drive Link" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyLink" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\shell\RR_CopyLink\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --get-url \"%V\"" /f'
+
   ; BACKGROUND: Sync this folder
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /ve /d "Sync this folder to Google Drive" /f'
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /v "Icon" /d "$INSTDIR\resources\assets\sync-icon.ico" /f'
@@ -57,10 +70,20 @@
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%V\"" /f'
 
+  ; BACKGROUND: Copy Drive Link
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyLink" /ve /d "Copy Drive Link" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyLink" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\Directory\Background\shell\RR_CopyLink\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --get-url \"%V\"" /f'
+
   ; FILE: Open in Google Drive
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive" /ve /d "Open in Google Drive" /f'
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
   nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_OpenDrive\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --open-drive \"%1\"" /f'
+
+  ; FILE: Copy Drive Link
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_CopyLink" /ve /d "Copy Drive Link" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_CopyLink" /v "Icon" /d "$INSTDIR\resources\assets\link-icon.ico" /f'
+  nsExec::ExecToLog 'reg add "HKCU\Software\Classes\*\shell\RR_CopyLink\command" /ve /d "\"$INSTDIR\RRightclickrr.exe\" --get-url \"%1\"" /f'
 
   DetailPrint "Context menu registered."
 !macroend
@@ -74,13 +97,25 @@
 
   ; === REMOVE CLASSIC MENU ENTRIES ===
   DetailPrint "Removing classic context menu entries..."
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers\ RRightclickrrSynced" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\CLSID\{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_SyncDrive" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_CopyDrive" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_OpenDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\RR_CopyLink" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_SyncDrive" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_CopyDrive" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_OpenDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\RR_CopyLink" /f'
   nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\*\shell\RR_OpenDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\*\shell\RR_CopyLink" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\SyncToGoogleDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\CopyToGoogleDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\OpenInGoogleDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\shell\GetDriveLink" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\Directory\Background\shell\SyncToGoogleDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\*\shell\OpenInGoogleDrive" /f'
+  nsExec::ExecToLog 'reg delete "HKCU\Software\Classes\*\shell\GetDriveLink" /f'
 
   DetailPrint "Context menu entries removed."
 !macroend

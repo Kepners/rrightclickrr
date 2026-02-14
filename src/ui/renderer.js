@@ -124,6 +124,10 @@ function renderMappings() {
 }
 
 async function deleteMapping(index) {
+  const mapping = settings.folderMappings[index];
+  if (mapping) {
+    await window.api.stopWatching(mapping.localPath);
+  }
   settings.folderMappings.splice(index, 1);
   await window.api.saveSettings({ folderMappings: settings.folderMappings });
   renderMappings();

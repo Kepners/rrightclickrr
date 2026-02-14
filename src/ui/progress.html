@@ -185,7 +185,10 @@
     const { ipcRenderer } = require('electron');
 
     document.getElementById('cancelBtn').addEventListener('click', () => {
-      window.close();
+      const cancelBtn = document.getElementById('cancelBtn');
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Cancelling...';
+      ipcRenderer.send('sync-cancel');
     });
 
     ipcRenderer.on('sync-init', (event, data) => {
@@ -249,6 +252,14 @@
       document.getElementById('currentFile').textContent = data.error;
       document.getElementById('currentFile').classList.add('error');
       document.getElementById('cancelBtn').textContent = 'Close';
+      document.getElementById('cancelBtn').disabled = false;
+    });
+
+    ipcRenderer.on('sync-cancelled', () => {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = 'Sync cancelled';
+      document.getElementById('currentFile').textContent = 'Upload was cancelled.';
+      setTimeout(() => window.close(), 700);
     });
   </script>
 </body>

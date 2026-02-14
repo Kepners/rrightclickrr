@@ -1,15 +1,53 @@
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { app } = require('electron');
 
 const OVERLAY_CLSID = '{7B3B5E52-A1F0-4C5E-9B8A-1C2D3E4F5A6F}';
 
 async function runPowerShell(script) {
+  const scriptPath = path.join(
+    os.tmpdir(),
+    `rrightclickrr-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`
+  );
+
+  await fs.promises.writeFile(scriptPath, script, 'utf8');
+
   return new Promise((resolve, reject) => {
-    exec(`powershell -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"')}"`, (error, stdout, stderr) => {
-      if (error) reject(new Error(stderr || error.message));
-      else resolve(stdout);
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      { windowsHide: true }
+    );
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    const cleanup = () => {
+      fs.unlink(scriptPath, () => {});
+    };
+
+    child.on('error', (error) => {
+      cleanup();
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      cleanup();
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
+      }
     });
   });
 }

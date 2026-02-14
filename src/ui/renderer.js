@@ -39,16 +39,18 @@ async function init() {
 async function updateContextMenuUI() {
   const isRegistered = await window.api.isContextMenuRegistered();
   if (isRegistered) {
-    registerMenuBtn.textContent = '✓ Right-Click Menu Enabled';
+    registerMenuBtn.textContent = 'Right-Click Menu Enabled';
     registerMenuBtn.classList.add('registered');
-    contextMenuStatus.textContent = '✓ Active! Right-click any folder → "Show more options" → RRightclickrr.';
+    contextMenuStatus.textContent = 'Active! Right-click any folder -> "Show more options" -> RRightclickrr.';
     contextMenuStatus.style.color = '#4C956C';
   } else {
     registerMenuBtn.textContent = 'Enable Right-Click Menu';
     registerMenuBtn.classList.remove('registered');
-    contextMenuStatus.textContent = 'After enabling, right-click any folder → "Show more options" → find RRightclickrr options.';
+    contextMenuStatus.textContent = 'After enabling, right-click any folder -> "Show more options" -> find RRightclickrr options.';
     contextMenuStatus.style.color = '';
   }
+
+  registerMenuBtn.disabled = false;
 }
 
 function updateAuthUI() {
@@ -259,34 +261,39 @@ signOutBtn.addEventListener('click', async () => {
 
 // Context menu handlers
 registerMenuBtn.addEventListener('click', async () => {
+  if (registerMenuBtn.disabled) return;
+
   registerMenuBtn.disabled = true;
   registerMenuBtn.textContent = 'Registering...';
 
-  const result = await window.api.registerContextMenu();
+  try {
+    const result = await Promise.race([
+      window.api.registerContextMenu(),
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ success: false, error: 'Registration timed out. Please try again.' }), 20000);
+      })
+    ]);
 
-  if (result.success) {
-    registerMenuBtn.textContent = '✓ Right-Click Menu Enabled';
-    registerMenuBtn.classList.add('registered');
-    contextMenuStatus.textContent = '✓ Active! Right-click any folder to sync it to Google Drive.';
-    contextMenuStatus.style.color = '#4C956C';
-  } else {
-    alert('Failed to register: ' + result.error);
-    registerMenuBtn.textContent = 'Enable Right-Click Menu';
+    if (!result.success) {
+      alert('Failed to register: ' + result.error);
+    }
+  } catch (error) {
+    alert('Failed to register: ' + (error?.message || String(error)));
+  } finally {
+    await updateContextMenuUI();
   }
-
-  registerMenuBtn.disabled = false;
 });
 
 unregisterMenuBtn.addEventListener('click', async () => {
-  const result = await window.api.unregisterContextMenu();
-
-  if (result.success) {
-    registerMenuBtn.textContent = 'Enable Right-Click Menu';
-    registerMenuBtn.classList.remove('registered');
-    contextMenuStatus.textContent = 'After enabling, right-click any folder to sync it to Google Drive.';
-    contextMenuStatus.style.color = '';
-  } else {
-    alert('Failed to unregister: ' + result.error);
+  try {
+    const result = await window.api.unregisterContextMenu();
+    if (!result.success) {
+      alert('Failed to unregister: ' + result.error);
+    }
+  } catch (error) {
+    alert('Failed to unregister: ' + (error?.message || String(error)));
+  } finally {
+    await updateContextMenuUI();
   }
 });
 

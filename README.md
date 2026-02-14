@@ -2,7 +2,7 @@
 
 **Right-click any folder to sync it to Google Drive.**
 
-![Version](https://img.shields.io/badge/version-1.2.6-green)
+![Version](https://img.shields.io/badge/version-1.2.7-green)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 

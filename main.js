@@ -1,7 +1,7 @@
 // === ELECTRON MUST BE REQUIRED FIRST ===
 // Before ANY other requires to ensure Electron's module hook is active
 const electron = require('electron');
-const { app, BrowserWindow, Tray, Menu, ipcMain, clipboard, Notification, shell, dialog } = electron;
+const { app, BrowserWindow, Tray, Menu, ipcMain, clipboard, Notification, shell, dialog, screen } = electron;
 
 // Now we can require other modules
 const fs = require('fs');
@@ -626,13 +626,21 @@ if (!gotTheLock) {
       progressWindow = new BrowserWindow({
         width: 560,
         height: 470,
+        minWidth: 560,
+        minHeight: 470,
+        maxWidth: 560,
+        maxHeight: 470,
         frame: false,
         transparent: false,
         alwaysOnTop: true,
         resizable: false,
         maximizable: false,
+        fullscreen: false,
         fullscreenable: false,
         skipTaskbar: true,
+        useContentSize: true,
+        autoHideMenuBar: true,
+        show: false,
         backgroundColor: '#1a1a1a',
         webPreferences: {
           nodeIntegration: true,
@@ -642,12 +650,22 @@ if (!gotTheLock) {
 
       progressWindow.loadFile(path.join(__dirname, 'src', 'ui', 'progress.html'));
       progressWindow.webContents.on('did-finish-load', () => {
+        try {
+          const workArea = screen.getPrimaryDisplay().workArea;
+          const x = Math.round(workArea.x + ((workArea.width - 560) / 2));
+          const y = Math.round(workArea.y + ((workArea.height - 470) / 2));
+          progressWindow.setBounds({ x, y, width: 560, height: 470 }, false);
+          progressWindow.setFullScreen(false);
+          progressWindow.setResizable(false);
+        } catch {}
+
         progressWindow.webContents.send('sync-init', {
           folderPath,
           mode: job?.mode || 'sync',
           source: job?.source || 'manual',
           queueLength: syncQueue.length
         });
+        progressWindow.show();
         resolve(progressWindow); // Resolve AFTER window is ready
       });
 

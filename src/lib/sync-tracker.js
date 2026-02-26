@@ -62,6 +62,59 @@ class SyncTracker {
   }
 
   /**
+   * Bulk record/update synced items with a single store write.
+   * @param {Array<object>} entries
+   */
+  bulkTrackSync(entries = []) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return;
+    }
+
+    const syncedItems = this.store.get('syncedItems');
+
+    for (const entry of entries) {
+      if (!entry || !entry.localPath || !entry.driveId) {
+        continue;
+      }
+
+      const normalized = this.normalizePath(entry.localPath);
+      const existing = syncedItems[normalized] || {};
+      const payload = {
+        ...existing,
+        driveId: entry.driveId,
+        driveUrl: entry.driveUrl || existing.driveUrl || '',
+        type: entry.type || existing.type || 'file',
+        syncedAt: new Date().toISOString(),
+        localPath: entry.localPath
+      };
+
+      const metadata = entry.metadata;
+      if (metadata && typeof metadata === 'object') {
+        if (Number.isFinite(metadata.sizeBytes)) {
+          payload.sizeBytes = metadata.sizeBytes;
+        }
+        if (Number.isFinite(metadata.mtimeMs)) {
+          payload.mtimeMs = metadata.mtimeMs;
+        }
+        if (typeof metadata.remoteModifiedTime === 'string' && metadata.remoteModifiedTime) {
+          payload.remoteModifiedTime = metadata.remoteModifiedTime;
+        }
+        if (Number.isFinite(metadata.remoteSize)) {
+          payload.remoteSize = metadata.remoteSize;
+        }
+        if (typeof metadata.remoteMd5 === 'string' && metadata.remoteMd5) {
+          payload.remoteMd5 = metadata.remoteMd5;
+        }
+      }
+
+      syncedItems[normalized] = payload;
+    }
+
+    this.store.set('syncedItems', syncedItems);
+    this.persistSyncedPathIndex();
+  }
+
+  /**
    * Check whether a file is unchanged since last successful sync.
    * @param {string} localPath - Full local path
    * @param {number} sizeBytes - Current file size

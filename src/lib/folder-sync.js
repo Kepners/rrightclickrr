@@ -15,6 +15,7 @@ class FolderSync {
     this.abortController = null;
     this.pauseWaiters = [];
     this.excludePaths = []; // Paths to exclude from sync
+    this.pendingMetadataBackfills = new Map();
   }
 
   /**
@@ -71,6 +72,7 @@ class FolderSync {
     this.paused = false;
     this.pauseWaiters = [];
     this.abortController = new AbortController();
+    this.pendingMetadataBackfills = new Map();
     const runOptions = this.normalizeOptions(options);
 
     const folderName = path.basename(localFolderPath);
@@ -100,7 +102,7 @@ class FolderSync {
         totalBytes += size;
 
         const priorSync = this.syncTracker ? this.syncTracker.getSyncInfo(file) : null;
-        const state = this.classifyFileState(file, size, mtimeMs, priorSync);
+        const state = await this.classifyFileState(file, size, mtimeMs, priorSync);
         fileMeta.set(file, { size, mtimeMs, priorSync, state });
 
         if (state === 'skip') {
@@ -119,6 +121,8 @@ class FolderSync {
         filesToUpload++;
       }
     }
+
+    this.flushLocalMetadataBackfills();
 
     const preflight = {
       totalFiles,
@@ -456,11 +460,41 @@ class FolderSync {
     };
   }
 
-  classifyFileState(filePath, sizeBytes, mtimeMs, priorSync) {
+  async classifyFileState(filePath, sizeBytes, mtimeMs, priorSync) {
     if (!this.syncTracker) return 'new';
+    if (!priorSync || !priorSync.driveId) return 'new';
     if (this.shouldSkipFile(filePath, sizeBytes, mtimeMs)) return 'skip';
-    if (priorSync?.driveId) return 'changed';
-    return 'new';
+
+    // Legacy tracker entries (older app versions) may have drive IDs but no local file metadata.
+    // In that case, trust syncedAt as the baseline and backfill size/mtime locally.
+    if (!Number.isFinite(priorSync.sizeBytes) || !Number.isFinite(priorSync.mtimeMs)) {
+      const syncedAtMs = Date.parse(priorSync.syncedAt || '');
+      if (Number.isFinite(syncedAtMs) && mtimeMs <= (syncedAtMs + 2000)) {
+        this.backfillLocalSyncMetadata(filePath, priorSync, sizeBytes, mtimeMs);
+        return 'skip';
+      }
+      return 'changed';
+    }
+
+    // If only timestamps drifted (common with cloud-managed local folders), verify via MD5 when possible.
+    if (
+      Number.isFinite(priorSync.sizeBytes) &&
+      priorSync.sizeBytes === sizeBytes &&
+      typeof priorSync.remoteMd5 === 'string' &&
+      priorSync.remoteMd5
+    ) {
+      try {
+        const localMd5 = await this.calculateFileMd5(filePath);
+        if (localMd5.toLowerCase() === String(priorSync.remoteMd5).toLowerCase()) {
+          this.backfillLocalSyncMetadata(filePath, priorSync, sizeBytes, mtimeMs);
+          return 'skip';
+        }
+      } catch {
+        // If hashing fails, fall through to changed.
+      }
+    }
+
+    return 'changed';
   }
 
   shouldSkipFile(filePath, sizeBytes, mtimeMs) {
@@ -468,6 +502,48 @@ class FolderSync {
       return false;
     }
     return this.syncTracker.isFileUpToDate(filePath, sizeBytes, mtimeMs);
+  }
+
+  backfillLocalSyncMetadata(filePath, priorSync, sizeBytes, mtimeMs) {
+    if (!this.syncTracker || !priorSync?.driveId) {
+      return;
+    }
+    this.pendingMetadataBackfills.set(path.normalize(filePath).toLowerCase(), {
+      localPath: filePath,
+      driveId: priorSync.driveId,
+      driveUrl: priorSync.driveUrl || '',
+      type: 'file',
+      metadata: {
+        sizeBytes,
+        mtimeMs,
+        remoteModifiedTime: priorSync.remoteModifiedTime || null,
+        remoteSize: Number.isFinite(priorSync.remoteSize) ? priorSync.remoteSize : null,
+        remoteMd5: priorSync.remoteMd5 || null
+      }
+    });
+  }
+
+  flushLocalMetadataBackfills() {
+    if (!this.syncTracker || !this.pendingMetadataBackfills || this.pendingMetadataBackfills.size === 0) {
+      return;
+    }
+
+    const entries = Array.from(this.pendingMetadataBackfills.values());
+    if (typeof this.syncTracker.bulkTrackSync === 'function') {
+      this.syncTracker.bulkTrackSync(entries);
+    } else {
+      for (const entry of entries) {
+        this.syncTracker.trackSync(
+          entry.localPath,
+          entry.driveId,
+          entry.driveUrl,
+          entry.type,
+          entry.metadata
+        );
+      }
+    }
+
+    this.pendingMetadataBackfills.clear();
   }
 
   recordFileSync(filePath, driveId, driveUrl, sizeBytes, mtimeMs, uploadResult = null) {

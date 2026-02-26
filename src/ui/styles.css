@@ -170,9 +170,20 @@ body {
   font-size: 0.85rem;
 }
 
+.signed-in-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
 .success-text {
   color: var(--success) !important;
   font-weight: 500;
+}
+
+.account-text {
+  font-size: 0.75rem !important;
+  color: var(--text-muted) !important;
 }
 
 /* Buttons */

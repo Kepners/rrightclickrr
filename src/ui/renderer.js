@@ -4,6 +4,7 @@ const statusDot = authStatus.querySelector('.status-dot');
 const statusText = authStatus.querySelector('.status-text');
 const signInView = document.getElementById('signInView');
 const signedInView = document.getElementById('signedInView');
+const accountText = document.getElementById('accountText');
 const signInBtn = document.getElementById('signInBtn');
 const signOutBtn = document.getElementById('signOutBtn');
 const registerMenuBtn = document.getElementById('registerMenuBtn');
@@ -40,7 +41,9 @@ let settings = {
   uploadScheduleStart: '00:00',
   uploadScheduleEnd: '23:59',
   autoResumeInterruptedSync: true,
-  isAuthenticated: false
+  isAuthenticated: false,
+  accountEmail: null,
+  accountName: null
 };
 
 // Initialize
@@ -88,11 +91,25 @@ function updateAuthUI() {
   if (settings.isAuthenticated) {
     statusDot.classList.add('connected');
     statusText.textContent = 'Connected';
+    if (accountText) {
+      if (settings.accountEmail && settings.accountName) {
+        accountText.textContent = `Account: ${settings.accountName} (${settings.accountEmail})`;
+      } else if (settings.accountEmail) {
+        accountText.textContent = `Account: ${settings.accountEmail}`;
+      } else if (settings.accountName) {
+        accountText.textContent = `Account: ${settings.accountName}`;
+      } else {
+        accountText.textContent = 'Account: Connected (email unavailable)';
+      }
+    }
     signInView.classList.add('hidden');
     signedInView.classList.remove('hidden');
   } else {
     statusDot.classList.remove('connected');
     statusText.textContent = 'Not signed in';
+    if (accountText) {
+      accountText.textContent = 'Account: Not signed in';
+    }
     signInView.classList.remove('hidden');
     signedInView.classList.add('hidden');
   }
@@ -266,7 +283,7 @@ signInBtn.addEventListener('click', async () => {
   const result = await window.api.authenticate();
 
   if (result.success) {
-    settings.isAuthenticated = true;
+    settings = await window.api.getSettings();
     updateAuthUI();
   } else {
     alert('Sign in failed: ' + result.error);
@@ -286,7 +303,7 @@ signInBtn.addEventListener('click', async () => {
 
 signOutBtn.addEventListener('click', async () => {
   await window.api.signOut();
-  settings.isAuthenticated = false;
+  settings = await window.api.getSettings();
   updateAuthUI();
 });
 
@@ -298,17 +315,34 @@ registerMenuBtn.addEventListener('click', async () => {
   registerMenuBtn.textContent = 'Registering...';
 
   try {
+    const timeoutMs = 20000;
     const result = await Promise.race([
       window.api.registerContextMenu(),
       new Promise((resolve) => {
-        setTimeout(() => resolve({ success: false, error: 'Registration timed out. Please try again.' }), 20000);
+        setTimeout(() => resolve({ success: false, timeout: true, error: 'Registration timed out.' }), timeoutMs);
       })
     ]);
 
-    if (!result.success) {
+    if (result.success) {
+      return;
+    }
+
+    const isRegisteredNow = await window.api.isContextMenuRegistered();
+    if (isRegisteredNow) {
+      return;
+    }
+
+    if (result.timeout) {
+      const seconds = Math.floor(timeoutMs / 1000);
+      alert(`Registration took longer than ${seconds}s and did not complete. Please try again.`);
+    } else {
       alert('Failed to register: ' + result.error);
     }
   } catch (error) {
+    const isRegisteredNow = await window.api.isContextMenuRegistered();
+    if (isRegisteredNow) {
+      return;
+    }
     alert('Failed to register: ' + (error?.message || String(error)));
   } finally {
     await updateContextMenuUI();

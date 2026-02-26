@@ -1016,7 +1016,11 @@ if (!gotTheLock) {
   });
 
   // IPC Handlers
-  ipcMain.handle('get-settings', () => {
+  ipcMain.handle('get-settings', async () => {
+    const accountInfo = googleAuth?.isAuthenticated()
+      ? await googleAuth.getAccountInfo()
+      : null;
+
     return {
       folderMappings: store.get('folderMappings'),
       autoUpload: store.get('autoUpload'),
@@ -1035,7 +1039,9 @@ if (!gotTheLock) {
       avgUploadSpeedBps: store.get('avgUploadSpeedBps'),
       queueLength: syncQueue.length,
       activeSyncJob: activeSyncJob ? { ...activeSyncJob } : null,
-      isAuthenticated: googleAuth?.isAuthenticated() || false
+      isAuthenticated: googleAuth?.isAuthenticated() || false,
+      accountEmail: accountInfo?.email || null,
+      accountName: accountInfo?.displayName || null
     };
   });
 

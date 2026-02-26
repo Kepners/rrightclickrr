@@ -241,6 +241,28 @@ class GoogleAuth {
     this.oauth2Client.setCredentials({});
   }
 
+  async getAccountInfo() {
+    if (!this.isAuthenticated()) {
+      return null;
+    }
+
+    try {
+      const drive = google.drive({ version: 'v3', auth: this.oauth2Client });
+      const response = await drive.about.get({
+        fields: 'user(displayName,emailAddress)'
+      });
+      const user = response?.data?.user || null;
+      if (!user) return null;
+
+      return {
+        email: user.emailAddress || null,
+        displayName: user.displayName || null
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
   getClient() {
     return this.oauth2Client;
   }

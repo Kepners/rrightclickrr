@@ -120,7 +120,22 @@ if (!gotTheLock) {
       folderMappings: [],
       lastDriveFolder: null,
       autoUpload: true,
-      showNotifications: true
+      showNotifications: true,
+      syncQueue: [],
+      activeSyncSession: null,
+      lastSyncReport: null,
+      retryMaxAttempts: 3,
+      retryBaseDelayMs: 1000,
+      retryMaxDelayMs: 20000,
+      verifyUploads: true,
+      verifySampleRate: 0.2,
+      uploadBandwidthLimitKbps: 0,
+      uploadScheduleEnabled: false,
+      uploadScheduleStart: '00:00',
+      uploadScheduleEnd: '23:59',
+      autoResumeInterruptedSync: true,
+      conflictPolicy: 'keep-both-local-wins',
+      avgUploadSpeedBps: 0
     }
   });
 
@@ -231,6 +246,7 @@ if (!gotTheLock) {
           try {
             await googleAuth.authenticate();
             showNotification('Signed In', 'Successfully connected to Google Drive!');
+            processSyncQueue();
             updateTrayMenu();
           } catch (error) {
             showNotification('Sign In Failed', error.message);
@@ -322,6 +338,7 @@ if (!gotTheLock) {
             try {
               await googleAuth.authenticate();
               showNotification('Signed In', 'Successfully connected to Google Drive!');
+              processSyncQueue();
               updateTrayMenu();
             } catch (error) {
               showNotification('Sign In Failed', error.message);
@@ -359,10 +376,15 @@ if (!gotTheLock) {
     }
 
     mainWindow = new BrowserWindow({
-      width: 900,
-      height: 800,
-      minWidth: 700,
-      minHeight: 600,
+      width: 760,
+      height: 620,
+      minWidth: 760,
+      minHeight: 620,
+      maxWidth: 760,
+      maxHeight: 620,
+      resizable: false,
+      maximizable: false,
+      fullscreenable: false,
       frame: false,
       webPreferences: {
         nodeIntegration: false,
@@ -395,27 +417,221 @@ if (!gotTheLock) {
   }
 
   let progressWindow = null;
-  let currentSync = null; // Track current sync for cancellation
+  let currentSync = null; // Track current sync for cancellation/pause/resume
+  let activeSyncJob = null;
+  let syncQueue = [];
+  let isQueueProcessing = false;
 
-  // Handle sync cancel from progress window
+  function normalizeSyncJob(input) {
+    const folderPath = input?.folderPath;
+    if (!folderPath) return null;
+    return {
+      id: input.id || `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      folderPath,
+      mode: input.mode === 'copy' ? 'copy' : 'sync',
+      onlyFiles: Array.isArray(input.onlyFiles) ? input.onlyFiles : [],
+      source: input.source || 'manual',
+      createdAt: input.createdAt || new Date().toISOString()
+    };
+  }
+
+  function persistSyncQueue() {
+    store.set('syncQueue', syncQueue.map(job => ({
+      id: job.id,
+      folderPath: job.folderPath,
+      mode: job.mode,
+      onlyFiles: job.onlyFiles || [],
+      source: job.source || 'manual',
+      createdAt: job.createdAt
+    })));
+  }
+
+  function loadPersistedSyncQueue() {
+    const persisted = store.get('syncQueue') || [];
+    syncQueue = persisted.map(normalizeSyncJob).filter(Boolean);
+  }
+
+  function setActiveSyncSession(job, status = 'running') {
+    if (!job) {
+      store.set('activeSyncSession', null);
+      return;
+    }
+    store.set('activeSyncSession', {
+      id: job.id,
+      folderPath: job.folderPath,
+      mode: job.mode,
+      onlyFiles: job.onlyFiles || [],
+      source: job.source || 'manual',
+      createdAt: job.createdAt,
+      startedAt: new Date().toISOString(),
+      status
+    });
+  }
+
+  function clearActiveSyncSession() {
+    store.set('activeSyncSession', null);
+  }
+
+  function getSyncRuntimeOptions() {
+    const uploadBandwidthLimitKbps = Number(store.get('uploadBandwidthLimitKbps')) || 0;
+    return {
+      retryMaxAttempts: Number(store.get('retryMaxAttempts')) || 3,
+      retryBaseDelayMs: Number(store.get('retryBaseDelayMs')) || 1000,
+      retryMaxDelayMs: Number(store.get('retryMaxDelayMs')) || 20000,
+      verifyUploads: Boolean(store.get('verifyUploads')),
+      verifySampleRate: Number(store.get('verifySampleRate')) || 0,
+      bandwidthLimitBytesPerSec: uploadBandwidthLimitKbps > 0 ? uploadBandwidthLimitKbps * 1024 : 0,
+      schedule: {
+        enabled: Boolean(store.get('uploadScheduleEnabled')),
+        start: store.get('uploadScheduleStart') || '00:00',
+        end: store.get('uploadScheduleEnd') || '23:59'
+      },
+      estimatedSpeedBps: Number(store.get('avgUploadSpeedBps')) || 0,
+      conflictPolicy: store.get('conflictPolicy') || 'keep-both-local-wins'
+    };
+  }
+
+  function updateAverageUploadSpeed(result, elapsedMs) {
+    const uploadedBytes = Number(result?.preflight?.bytesToUpload) || 0;
+    const elapsedSeconds = elapsedMs > 0 ? elapsedMs / 1000 : 0;
+    if (uploadedBytes <= 0 || elapsedSeconds <= 0.1) {
+      return;
+    }
+    const observed = uploadedBytes / elapsedSeconds;
+    const currentAvg = Number(store.get('avgUploadSpeedBps')) || 0;
+    const nextAvg = currentAvg > 0 ? (currentAvg * 0.7) + (observed * 0.3) : observed;
+    store.set('avgUploadSpeedBps', Math.max(0, Math.round(nextAvg)));
+  }
+
+  function getSyncJobKey(job) {
+    const normalizedFolder = normalizeLocalPath(job.folderPath);
+    const onlyFiles = (job.onlyFiles || [])
+      .map(p => normalizeLocalPath(p))
+      .sort()
+      .join('|');
+    return `${normalizedFolder}|${job.mode}|${onlyFiles}`;
+  }
+
+  function enqueueSyncJob(jobInput, options = {}) {
+    const job = normalizeSyncJob(jobInput);
+    if (!job) return null;
+
+    const key = getSyncJobKey(job);
+    const duplicateInQueue = syncQueue.some(existing => getSyncJobKey(existing) === key);
+    const duplicateActive = activeSyncJob && getSyncJobKey(activeSyncJob) === key;
+    if (duplicateInQueue || duplicateActive) {
+      return null;
+    }
+
+    if (options.front) {
+      syncQueue.unshift(job);
+    } else {
+      syncQueue.push(job);
+    }
+
+    persistSyncQueue();
+    updateTrayTooltip();
+
+    const alreadyRunning = Boolean(currentSync);
+    if (alreadyRunning && options.notify !== false) {
+      showNotification('Sync Queued', `${path.basename(job.folderPath)} added to queue.`);
+    }
+
+    processSyncQueue();
+    return job;
+  }
+
+  function recoverInterruptedSyncSession() {
+    loadPersistedSyncQueue();
+
+    const active = store.get('activeSyncSession');
+    const autoResume = Boolean(store.get('autoResumeInterruptedSync'));
+
+    if (active && autoResume) {
+      const recoveredJob = normalizeSyncJob({
+        ...active,
+        source: 'recovered'
+      });
+      if (recoveredJob) {
+        syncQueue.unshift(recoveredJob);
+      }
+    }
+
+    clearActiveSyncSession();
+    persistSyncQueue();
+  }
+
+  // Handle sync controls from progress window
   ipcMain.on('sync-cancel', () => {
     if (currentSync) {
       currentSync.cancel();
     }
-    if (progressWindow) {
+    if (progressWindow && !progressWindow.isDestroyed()) {
       progressWindow.webContents.send('sync-cancelled');
     }
   });
 
-  function createProgressWindow(folderPath) {
+  ipcMain.on('sync-pause', () => {
+    if (currentSync) {
+      currentSync.pause();
+    }
+    if (progressWindow && !progressWindow.isDestroyed()) {
+      progressWindow.webContents.send('sync-state', { paused: true });
+    }
+  });
+
+  ipcMain.on('sync-resume', () => {
+    if (currentSync) {
+      currentSync.resume();
+    }
+    if (progressWindow && !progressWindow.isDestroyed()) {
+      progressWindow.webContents.send('sync-state', { paused: false });
+    }
+  });
+
+  ipcMain.on('sync-close-window', () => {
+    if (progressWindow && !progressWindow.isDestroyed()) {
+      progressWindow.close();
+    }
+  });
+
+  ipcMain.on('sync-retry-failed', () => {
+    const lastReport = store.get('lastSyncReport');
+    const failedFiles = Array.isArray(lastReport?.failedFiles) ? lastReport.failedFiles : [];
+    if (!lastReport?.folderPath || failedFiles.length === 0) {
+      if (progressWindow && !progressWindow.isDestroyed()) {
+        progressWindow.webContents.send('sync-error', { error: 'No failed files available for retry.' });
+      }
+      return;
+    }
+
+    enqueueSyncJob({
+      folderPath: lastReport.folderPath,
+      mode: lastReport.mode === 'copy' ? 'copy' : 'sync',
+      onlyFiles: failedFiles.map(f => f.localPath).filter(Boolean),
+      source: 'retry-failed'
+    });
+
+    if (progressWindow && !progressWindow.isDestroyed()) {
+      progressWindow.webContents.send('sync-retry-queued', { count: failedFiles.length });
+    }
+  });
+
+  function createProgressWindow(folderPath, job = null) {
     return new Promise((resolve) => {
+      if (progressWindow && !progressWindow.isDestroyed()) {
+        progressWindow.close();
+      }
+
       progressWindow = new BrowserWindow({
-        width: 500,
-        height: 360,
+        width: 560,
+        height: 470,
         frame: false,
         transparent: false,
         alwaysOnTop: true,
         resizable: false,
+        maximizable: false,
+        fullscreenable: false,
         skipTaskbar: true,
         backgroundColor: '#1a1a1a',
         webPreferences: {
@@ -426,7 +642,12 @@ if (!gotTheLock) {
 
       progressWindow.loadFile(path.join(__dirname, 'src', 'ui', 'progress.html'));
       progressWindow.webContents.on('did-finish-load', () => {
-        progressWindow.webContents.send('sync-init', { folderPath });
+        progressWindow.webContents.send('sync-init', {
+          folderPath,
+          mode: job?.mode || 'sync',
+          source: job?.source || 'manual',
+          queueLength: syncQueue.length
+        });
         resolve(progressWindow); // Resolve AFTER window is ready
       });
 
@@ -436,106 +657,198 @@ if (!gotTheLock) {
     });
   }
 
-  async function handleFolderUpload(folderPath) {
+  async function runSyncJob(job) {
     if (!googleAuth.isAuthenticated()) {
       showNotification('Not Signed In', 'Please sign in to Google Drive first.');
       createWindow();
       return;
     }
 
-    // Show progress window - WAIT for it to be ready before starting sync
-    await createProgressWindow(folderPath);
+    if (!fs.existsSync(job.folderPath)) {
+      showNotification('Sync Skipped', `Folder not found: ${job.folderPath}`);
+      return;
+    }
+
+    const startedMs = Date.now();
+    await createProgressWindow(job.folderPath, job);
 
     try {
-      const folderSync = new FolderSync(driveUploader, store, logDir);
+      const folderSync = new FolderSync(driveUploader, store, logDir, syncTracker);
       const existingMapping = (store.get('folderMappings') || []).find(
-        m => normalizeLocalPath(m.localPath) === normalizeLocalPath(folderPath)
+        m => normalizeLocalPath(m.localPath) === normalizeLocalPath(job.folderPath)
       );
       if (existingMapping?.excludePaths?.length) {
         folderSync.setExcludePaths(existingMapping.excludePaths);
       }
-      currentSync = folderSync; // Track for cancellation
-      const result = await folderSync.syncFolder(folderPath, (progress) => {
-        // Update progress window
-        if (progressWindow) {
+
+      currentSync = folderSync;
+      activeSyncJob = job;
+      setActiveSyncSession(job, 'running');
+
+      const runtimeOptions = {
+        ...getSyncRuntimeOptions(),
+        onlyFiles: job.onlyFiles || []
+      };
+
+      const result = await folderSync.syncFolder(job.folderPath, (progress) => {
+        if (progressWindow && !progressWindow.isDestroyed()) {
           progressWindow.webContents.send('sync-progress', progress);
         }
+
         // Update tray tooltip with progress
-        if (tray) {
-          tray.setToolTip(`Syncing... ${progress.current}/${progress.total} files`);
+        if (tray && progress.phase !== 'preflight') {
+          const label = job.mode === 'copy' ? 'Copying' : 'Syncing';
+          tray.setToolTip(`${label}... ${progress.current}/${progress.total} files`);
         }
-      });
-      currentSync = null; // Clear after completion
+      }, runtimeOptions);
+
+      currentSync = null;
 
       // Check if cancelled
       if (folderSync.cancelled) {
-        if (progressWindow) {
-          progressWindow.close();
-          progressWindow = null;
-        }
+        clearActiveSyncSession();
         updateTrayTooltip();
         return;
       }
 
       // Track this sync in our database
       if (result.folderId && result.shareLink) {
-        syncTracker.trackSync(folderPath, result.folderId, result.shareLink, 'folder');
+        syncTracker.trackSync(job.folderPath, result.folderId, result.shareLink, 'folder');
 
         // Track each uploaded file individually
         if (result.uploadedFiles) {
           for (const file of result.uploadedFiles) {
-            syncTracker.trackSync(file.localPath, file.driveId, file.driveUrl, 'file');
+            syncTracker.trackSync(file.localPath, file.driveId, file.driveUrl, 'file', {
+              sizeBytes: Number.isFinite(file.sizeBytes) ? file.sizeBytes : null,
+              mtimeMs: Number.isFinite(file.mtimeMs) ? file.mtimeMs : null
+            });
           }
         }
 
-        // Add to folder mappings and start watching
-        const mappings = store.get('folderMappings') || [];
-        const existingIndex = mappings.findIndex(m => m.localPath === folderPath);
+        if (job.mode === 'sync') {
+          // Add to folder mappings and start watching
+          const mappings = store.get('folderMappings') || [];
+          const existingIndex = mappings.findIndex(m => normalizeLocalPath(m.localPath) === normalizeLocalPath(job.folderPath));
 
-        if (existingIndex === -1) {
-          // Add new mapping
-          mappings.push({
-            localPath: folderPath,
-            driveId: result.folderId,
-            driveName: path.basename(folderPath),
-            watching: true
-          });
-        } else {
-          mappings[existingIndex] = {
-            ...mappings[existingIndex],
-            driveId: result.folderId,
-            driveName: path.basename(folderPath),
-            watching: true
-          };
+          if (existingIndex === -1) {
+            // Add new mapping
+            mappings.push({
+              localPath: job.folderPath,
+              driveId: result.folderId,
+              driveName: path.basename(job.folderPath),
+              watching: true
+            });
+          } else {
+            mappings[existingIndex] = {
+              ...mappings[existingIndex],
+              driveId: result.folderId,
+              driveName: path.basename(job.folderPath),
+              watching: true
+            };
+          }
+          store.set('folderMappings', mappings);
+          syncWatchersWithMappings(mappings);
         }
-        store.set('folderMappings', mappings);
-        syncWatchersWithMappings(mappings);
-
-        // Start watching this folder
-        updateTrayTooltip();
       }
 
       if (result.shareLink) {
         clipboard.writeText(result.shareLink);
       }
 
+      const report = {
+        jobId: job.id,
+        mode: job.mode,
+        folderPath: job.folderPath,
+        source: job.source || 'manual',
+        startedAt: new Date(startedMs).toISOString(),
+        completedAt: new Date().toISOString(),
+        filesUploaded: result.filesUploaded,
+        filesSkipped: result.filesSkipped || 0,
+        filesFailed: result.filesFailed || 0,
+        totalFiles: result.totalFiles || result.filesUploaded,
+        failedFiles: result.failedFiles || [],
+        preflight: result.preflight || null,
+        conflictCount: result.conflictCount || 0,
+        verifyCheckedCount: result.verifyCheckedCount || 0,
+        verifyFailedCount: result.verifyFailedCount || 0,
+        shareLink: result.shareLink || null
+      };
+      store.set('lastSyncReport', report);
+      updateAverageUploadSpeed(result, Date.now() - startedMs);
+
       // Show completion in progress window
-      if (progressWindow) {
+      if (progressWindow && !progressWindow.isDestroyed()) {
         progressWindow.webContents.send('sync-complete', {
-          filesUploaded: result.filesUploaded,
-          shareLink: result.shareLink
+          ...report
         });
       }
 
+      if (job.mode === 'copy') {
+        showNotification('Copy Complete', `Copied ${result.filesUploaded} files. Link copied to clipboard.`);
+      } else if ((result.filesFailed || 0) > 0) {
+        showNotification('Sync Completed With Errors', `${result.filesFailed} file(s) failed. Use Retry Failed.`);
+      }
+
+      clearActiveSyncSession();
       updateTrayTooltip();
     } catch (error) {
-      safeLog('Upload failed:', error);
-      showNotification('Sync Failed', error.message);
-      if (progressWindow) {
+      safeLog('Sync job failed:', error);
+      showNotification(job.mode === 'copy' ? 'Copy Failed' : 'Sync Failed', error.message);
+
+      store.set('lastSyncReport', {
+        jobId: job.id,
+        mode: job.mode,
+        folderPath: job.folderPath,
+        source: job.source || 'manual',
+        startedAt: new Date(startedMs).toISOString(),
+        completedAt: new Date().toISOString(),
+        error: error.message,
+        failedFiles: []
+      });
+
+      if (progressWindow && !progressWindow.isDestroyed()) {
         progressWindow.webContents.send('sync-error', { error: error.message });
       }
+      clearActiveSyncSession();
+      updateTrayTooltip();
+    } finally {
+      currentSync = null;
+      activeSyncJob = null;
+    }
+  }
+
+  async function processSyncQueue() {
+    if (isQueueProcessing) return;
+    if (!googleAuth || !googleAuth.isAuthenticated()) return;
+
+    isQueueProcessing = true;
+    try {
+      while (syncQueue.length > 0) {
+        const job = syncQueue.shift();
+        persistSyncQueue();
+        await runSyncJob(job);
+      }
+    } finally {
+      isQueueProcessing = false;
       updateTrayTooltip();
     }
+  }
+
+  async function handleFolderUpload(folderPath) {
+    if (!googleAuth.isAuthenticated()) {
+      showNotification('Not Signed In', 'Please sign in to Google Drive first.');
+      createWindow();
+      return;
+    }
+    if (!fs.existsSync(folderPath)) {
+      showNotification('Sync Failed', `Folder not found: ${folderPath}`);
+      return;
+    }
+    enqueueSyncJob({
+      folderPath,
+      mode: 'sync',
+      source: 'manual'
+    });
   }
 
   // Copy to Google Drive (one-time upload, NO watching)
@@ -545,76 +858,15 @@ if (!gotTheLock) {
       createWindow();
       return;
     }
-
-    // Show progress window - WAIT for it to be ready before starting sync
-    await createProgressWindow(folderPath);
-
-    try {
-      const folderSync = new FolderSync(driveUploader, store, logDir);
-      const existingMapping = (store.get('folderMappings') || []).find(
-        m => normalizeLocalPath(m.localPath) === normalizeLocalPath(folderPath)
-      );
-      if (existingMapping?.excludePaths?.length) {
-        folderSync.setExcludePaths(existingMapping.excludePaths);
-      }
-      currentSync = folderSync; // Track for cancellation
-      const result = await folderSync.syncFolder(folderPath, (progress) => {
-        if (progressWindow) {
-          progressWindow.webContents.send('sync-progress', progress);
-        }
-        if (tray) {
-          tray.setToolTip(`Copying... ${progress.current}/${progress.total} files`);
-        }
-      });
-      currentSync = null; // Clear after completion
-
-      // Check if cancelled
-      if (folderSync.cancelled) {
-        if (progressWindow) {
-          progressWindow.close();
-          progressWindow = null;
-        }
-        updateTrayTooltip();
-        return;
-      }
-
-      // Track this sync in our database (for URL retrieval later)
-      if (result.folderId && result.shareLink) {
-        syncTracker.trackSync(folderPath, result.folderId, result.shareLink, 'folder');
-
-        // Track each uploaded file individually
-        if (result.uploadedFiles) {
-          for (const file of result.uploadedFiles) {
-            syncTracker.trackSync(file.localPath, file.driveId, file.driveUrl, 'file');
-          }
-        }
-
-        // NOTE: We do NOT add to folderMappings or start watching!
-        // This is the key difference from handleFolderUpload
-      }
-
-      if (result.shareLink) {
-        clipboard.writeText(result.shareLink);
-      }
-
-      // Show completion in progress window
-      if (progressWindow) {
-        progressWindow.webContents.send('sync-complete', {
-          filesUploaded: result.filesUploaded,
-          shareLink: result.shareLink
-        });
-      }
-
-      showNotification('Copy Complete', `Copied ${result.filesUploaded} files. Link copied to clipboard.`);
-      updateTrayTooltip();
-    } catch (error) {
-      safeLog('Copy failed:', error);
-      showNotification('Copy Failed', error.message);
-      if (progressWindow) {
-        progressWindow.webContents.send('sync-error', { error: error.message });
-      }
-      updateTrayTooltip();
+    if (!fs.existsSync(folderPath)) {
+      showNotification('Copy Failed', `Folder not found: ${folderPath}`);
+      return;
     }
+    enqueueSyncJob({
+      folderPath,
+      mode: 'copy',
+      source: 'manual'
+    });
   }
 
   async function handleGetUrl(itemPath) {
@@ -755,11 +1007,7 @@ if (!gotTheLock) {
 
   ipcMain.on('window-maximize', () => {
     if (mainWindow) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
-      } else {
-        mainWindow.maximize();
-      }
+      mainWindow.focus();
     }
   });
 
@@ -773,6 +1021,20 @@ if (!gotTheLock) {
       folderMappings: store.get('folderMappings'),
       autoUpload: store.get('autoUpload'),
       showNotifications: store.get('showNotifications'),
+      retryMaxAttempts: store.get('retryMaxAttempts'),
+      retryBaseDelayMs: store.get('retryBaseDelayMs'),
+      retryMaxDelayMs: store.get('retryMaxDelayMs'),
+      verifyUploads: store.get('verifyUploads'),
+      verifySampleRate: store.get('verifySampleRate'),
+      uploadBandwidthLimitKbps: store.get('uploadBandwidthLimitKbps'),
+      uploadScheduleEnabled: store.get('uploadScheduleEnabled'),
+      uploadScheduleStart: store.get('uploadScheduleStart'),
+      uploadScheduleEnd: store.get('uploadScheduleEnd'),
+      autoResumeInterruptedSync: store.get('autoResumeInterruptedSync'),
+      conflictPolicy: store.get('conflictPolicy'),
+      avgUploadSpeedBps: store.get('avgUploadSpeedBps'),
+      queueLength: syncQueue.length,
+      activeSyncJob: activeSyncJob ? { ...activeSyncJob } : null,
       isAuthenticated: googleAuth?.isAuthenticated() || false
     };
   });
@@ -788,6 +1050,40 @@ if (!gotTheLock) {
     }
     if (settings.showNotifications !== undefined) {
       store.set('showNotifications', settings.showNotifications);
+    }
+    if (settings.retryMaxAttempts !== undefined) {
+      store.set('retryMaxAttempts', Math.max(1, Number(settings.retryMaxAttempts) || 3));
+    }
+    if (settings.retryBaseDelayMs !== undefined) {
+      store.set('retryBaseDelayMs', Math.max(250, Number(settings.retryBaseDelayMs) || 1000));
+    }
+    if (settings.retryMaxDelayMs !== undefined) {
+      store.set('retryMaxDelayMs', Math.max(1000, Number(settings.retryMaxDelayMs) || 20000));
+    }
+    if (settings.verifyUploads !== undefined) {
+      store.set('verifyUploads', Boolean(settings.verifyUploads));
+    }
+    if (settings.verifySampleRate !== undefined) {
+      const value = Number(settings.verifySampleRate);
+      store.set('verifySampleRate', Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0.2)));
+    }
+    if (settings.uploadBandwidthLimitKbps !== undefined) {
+      store.set('uploadBandwidthLimitKbps', Math.max(0, Number(settings.uploadBandwidthLimitKbps) || 0));
+    }
+    if (settings.uploadScheduleEnabled !== undefined) {
+      store.set('uploadScheduleEnabled', Boolean(settings.uploadScheduleEnabled));
+    }
+    if (settings.uploadScheduleStart !== undefined) {
+      store.set('uploadScheduleStart', String(settings.uploadScheduleStart || '00:00'));
+    }
+    if (settings.uploadScheduleEnd !== undefined) {
+      store.set('uploadScheduleEnd', String(settings.uploadScheduleEnd || '23:59'));
+    }
+    if (settings.autoResumeInterruptedSync !== undefined) {
+      store.set('autoResumeInterruptedSync', Boolean(settings.autoResumeInterruptedSync));
+    }
+    if (settings.conflictPolicy !== undefined) {
+      store.set('conflictPolicy', String(settings.conflictPolicy || 'keep-both-local-wins'));
     }
     return true;
   });
@@ -808,6 +1104,7 @@ if (!gotTheLock) {
     try {
       await googleAuth.authenticate();
       updateTrayMenu();
+      processSyncQueue();
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -995,6 +1292,9 @@ if (!gotTheLock) {
     // Switch to proper logging directory
     initLogging(app);
 
+    // Recover persisted queue/session state from previous run.
+    recoverInterruptedSyncSession();
+
     // Initialize Google Auth
     googleAuth = new GoogleAuth(store);
     await googleAuth.loadTokens(); // Load saved tokens from keytar
@@ -1015,41 +1315,22 @@ if (!gotTheLock) {
         return;
       }
 
-      const { filePath, driveId, driveName, relativePath, type } = data;
-
-      // Update tray to show syncing
-      if (tray) {
-        tray.setToolTip(`Syncing: ${relativePath}`);
+      const { filePath, localPath, driveName, relativePath } = data;
+      if (!fs.existsSync(filePath)) {
+        return;
       }
 
-      try {
-        // Keep folder structure in Drive for changed files.
-        let targetParentId = driveId;
-        const relativeDir = path.dirname(relativePath);
-        if (relativeDir && relativeDir !== '.') {
-          targetParentId = await driveUploader.ensureFolderPath(relativeDir, driveId);
-        }
+      const queued = enqueueSyncJob({
+        folderPath: localPath,
+        mode: 'sync',
+        onlyFiles: [filePath],
+        source: 'watcher'
+      }, { notify: false });
 
-        const uploaded = await driveUploader.uploadFile(filePath, targetParentId);
-
-        if (syncTracker && uploaded?.id) {
-          syncTracker.trackSync(
-            filePath,
-            uploaded.id,
-            uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
-            'file'
-          );
-        }
-
-        if (store.get('showNotifications')) {
-          showNotification('File Synced', `${relativePath} uploaded to ${driveName}`);
-        }
-      } catch (error) {
-        safeLog('Auto-sync failed:', error.message);
-        showNotification('Sync Failed', `Failed to sync ${relativePath}: ${error.message}`);
+      if (queued && store.get('showNotifications')) {
+        showNotification('File Queued', `${relativePath} queued for sync to ${driveName}`);
       }
 
-      // Update tray back to normal
       updateTrayTooltip();
     });
 
@@ -1092,6 +1373,9 @@ if (!gotTheLock) {
     // Check for folder argument on startup
     handleArgs(process.argv);
 
+    // Start queue processing if any jobs exist and auth is ready.
+    processSyncQueue();
+
     // Show window on first run
     if (!store.get('hasRunBefore')) {
       store.set('hasRunBefore', true);
@@ -1102,8 +1386,15 @@ if (!gotTheLock) {
   function updateTrayTooltip() {
     if (!tray) return;
     const watchedCount = folderWatcher ? folderWatcher.getWatchedFolders().length : 0;
-    if (watchedCount > 0) {
-      tray.setToolTip(`RRightclickrr - Watching ${watchedCount} folder${watchedCount > 1 ? 's' : ''}`);
+    const queuedCount = syncQueue.length;
+    if (currentSync && activeSyncJob) {
+      const action = activeSyncJob.mode === 'copy' ? 'Copying' : 'Syncing';
+      tray.setToolTip(`RRightclickrr - ${action} (${queuedCount} queued)`);
+    } else if (watchedCount > 0) {
+      const queueSuffix = queuedCount > 0 ? ` | ${queuedCount} queued` : '';
+      tray.setToolTip(`RRightclickrr - Watching ${watchedCount} folder${watchedCount > 1 ? 's' : ''}${queueSuffix}`);
+    } else if (queuedCount > 0) {
+      tray.setToolTip(`RRightclickrr - ${queuedCount} sync job${queuedCount > 1 ? 's' : ''} queued`);
     } else {
       tray.setToolTip('RRightclickrr - Google Drive Sync');
     }

@@ -1,12 +1,42 @@
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const { Transform } = require('stream');
+
+class RateLimitTransform extends Transform {
+  constructor(bytesPerSecond) {
+    super();
+    this.bytesPerSecond = Math.max(1, Number(bytesPerSecond) || 1);
+    this.nextAllowedTime = Date.now();
+    this.pendingTimer = null;
+  }
+
+  _transform(chunk, encoding, callback) {
+    const now = Date.now();
+    const waitMs = Math.max(0, this.nextAllowedTime - now);
+    const transmitMs = Math.ceil((chunk.length / this.bytesPerSecond) * 1000);
+    this.nextAllowedTime = now + waitMs + transmitMs;
+
+    this.pendingTimer = setTimeout(() => {
+      this.pendingTimer = null;
+      callback(null, chunk);
+    }, waitMs);
+  }
+
+  _destroy(error, callback) {
+    if (this.pendingTimer) {
+      clearTimeout(this.pendingTimer);
+      this.pendingTimer = null;
+    }
+    callback(error);
+  }
+}
 
 class DriveUploader {
   constructor(googleAuth) {
     this.googleAuth = googleAuth;
     this.drive = null;
-    this.currentUploadStream = null; // Track for cancellation
+    this.currentUploadStreams = []; // Track all streams for cancellation
   }
 
   getDrive() {
@@ -86,39 +116,79 @@ class DriveUploader {
     return currentParentId;
   }
 
-  async uploadFile(filePath, parentId = 'root', abortSignal = null) {
+  async uploadFile(filePath, parentId = 'root', optionsOrAbortSignal = null) {
     const drive = this.getDrive();
     const fileName = path.basename(filePath);
-    const fileSize = fs.statSync(filePath).size;
+    let abortSignal = null;
+    let existingFileId = null;
+    let bandwidthLimitBytesPerSec = 0;
+
+    if (
+      optionsOrAbortSignal &&
+      typeof optionsOrAbortSignal === 'object' &&
+      ('abortSignal' in optionsOrAbortSignal ||
+        'existingFileId' in optionsOrAbortSignal ||
+        'bandwidthLimitBytesPerSec' in optionsOrAbortSignal)
+    ) {
+      abortSignal = optionsOrAbortSignal.abortSignal || null;
+      existingFileId = optionsOrAbortSignal.existingFileId || null;
+      bandwidthLimitBytesPerSec = Number(optionsOrAbortSignal.bandwidthLimitBytesPerSec) || 0;
+    } else {
+      abortSignal = optionsOrAbortSignal;
+    }
 
     // Check if file already exists
-    const existingFile = await this.findFile(fileName, parentId);
+    const existingFile = existingFileId ? { id: existingFileId } : await this.findFile(fileName, parentId);
 
-    // Create stream and track it for cancellation
+    // Create stream and optionally wrap in a throttle transform.
     const readStream = fs.createReadStream(filePath);
-    this.currentUploadStream = readStream;
+    let uploadBody = readStream;
+    this.currentUploadStreams = [readStream];
+
+    if (bandwidthLimitBytesPerSec > 0) {
+      const throttle = new RateLimitTransform(bandwidthLimitBytesPerSec);
+      readStream.pipe(throttle);
+      uploadBody = throttle;
+      this.currentUploadStreams.push(throttle);
+    }
 
     // Handle abort signal
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => {
-        readStream.destroy();
+        this.cancelCurrentUpload();
       }, { once: true });
     }
 
     const media = {
-      body: readStream
+      body: uploadBody
     };
 
     let response;
 
     try {
-      if (existingFile) {
+      if (existingFile && existingFile.id) {
         // Update existing file
-        response = await drive.files.update({
-          fileId: existingFile.id,
-          media: media,
-          fields: 'id, name, webViewLink, webContentLink'
-        });
+        try {
+          response = await drive.files.update({
+            fileId: existingFile.id,
+            media: media,
+            fields: 'id, name, webViewLink, webContentLink, modifiedTime, size, md5Checksum'
+          });
+        } catch (error) {
+          // If cached file id is stale, recreate in target folder instead of failing the whole sync.
+          if (error?.code === 404 || error?.status === 404) {
+            response = await drive.files.create({
+              requestBody: {
+                name: fileName,
+                parents: [parentId]
+              },
+              media: media,
+              fields: 'id, name, webViewLink, webContentLink, modifiedTime, size, md5Checksum'
+            });
+          } else {
+            throw error;
+          }
+        }
       } else {
         // Create new file
         response = await drive.files.create({
@@ -127,11 +197,11 @@ class DriveUploader {
             parents: [parentId]
           },
           media: media,
-          fields: 'id, name, webViewLink, webContentLink'
+          fields: 'id, name, webViewLink, webContentLink, modifiedTime, size, md5Checksum'
         });
       }
     } finally {
-      this.currentUploadStream = null;
+      this.currentUploadStreams = [];
     }
 
     return response.data;
@@ -139,10 +209,16 @@ class DriveUploader {
 
   // Cancel current upload if one is in progress
   cancelCurrentUpload() {
-    if (this.currentUploadStream) {
-      this.currentUploadStream.destroy();
-      this.currentUploadStream = null;
+    for (const stream of this.currentUploadStreams) {
+      if (stream && typeof stream.destroy === 'function') {
+        try {
+          stream.destroy();
+        } catch {
+          // Ignore destroy failures
+        }
+      }
     }
+    this.currentUploadStreams = [];
   }
 
   async findFile(name, parentId = 'root') {
@@ -150,7 +226,7 @@ class DriveUploader {
     const escapedName = this.escapeQueryString(name);
     const response = await drive.files.list({
       q: `name='${escapedName}' and '${parentId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,
-      fields: 'files(id, name, modifiedTime, size, createdTime)',
+      fields: 'files(id, name, modifiedTime, size, createdTime, md5Checksum)',
       orderBy: 'createdTime',
       pageSize: 10
     });
@@ -160,6 +236,38 @@ class DriveUploader {
       console.warn(`Found ${files.length} files named "${name}" in parent ${parentId}, using oldest`);
     }
     return files[0] || null;
+  }
+
+  async getFileMetadata(fileId, fields = 'id,name,modifiedTime,size,md5Checksum,parents') {
+    const drive = this.getDrive();
+    try {
+      const response = await drive.files.get({
+        fileId,
+        fields
+      });
+      return response.data;
+    } catch (error) {
+      if (error?.code === 404 || error?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async copyFile(fileId, newName, parentId = null) {
+    const drive = this.getDrive();
+    const requestBody = {
+      name: newName
+    };
+    if (parentId) {
+      requestBody.parents = [parentId];
+    }
+    const response = await drive.files.copy({
+      fileId,
+      requestBody,
+      fields: 'id,name,webViewLink,modifiedTime,size,md5Checksum'
+    });
+    return response.data;
   }
 
   async getShareLink(fileId) {

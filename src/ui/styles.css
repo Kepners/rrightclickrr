@@ -390,6 +390,39 @@ body {
   accent-color: var(--primary);
 }
 
+.setting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.setting-field label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.setting-field input {
+  width: 100%;
+  padding: 0.42rem 0.5rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.setting-field-inline .time-range {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.time-range span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
 /* Support Button */
 .btn-support {
   background: #FFDD00;

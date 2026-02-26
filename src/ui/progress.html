@@ -12,18 +12,19 @@
       font-family: 'Segoe UI', system-ui, sans-serif;
       background: #1a1a1a;
       color: white;
-      padding: 20px;
+      padding: 18px;
       height: 100vh;
       display: flex;
       flex-direction: column;
       -webkit-app-region: drag;
       overflow: hidden;
+      gap: 8px;
     }
     .header {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 16px;
+      margin-bottom: 6px;
     }
     .spinner {
       width: 20px;
@@ -44,18 +45,18 @@
       color: #2C6E49;
     }
     .locations {
-      margin-bottom: 16px;
+      margin-bottom: 6px;
     }
     .location-row {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .location-label {
       font-size: 11px;
       color: #888;
-      width: 40px;
+      width: 46px;
       flex-shrink: 0;
     }
     .location-path {
@@ -65,9 +66,19 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .preflight {
+      font-size: 11px;
+      color: #7dbb95;
+      background: rgba(44, 110, 73, 0.14);
+      border: 1px solid rgba(76, 149, 108, 0.4);
+      border-radius: 6px;
+      padding: 6px 8px;
+      min-height: 34px;
+      line-height: 1.35;
+    }
     .progress-container {
       position: relative;
-      margin-bottom: 12px;
+      margin-top: 4px;
     }
     .progress-bar {
       height: 28px;
@@ -105,47 +116,76 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      margin-bottom: 8px;
     }
     .stats {
       display: flex;
       justify-content: space-between;
       font-size: 12px;
       color: #888;
-      margin-bottom: 8px;
     }
     .speed-stats {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
       font-size: 11px;
       color: #666;
-      margin-bottom: 12px;
     }
     .speed { color: #4C956C; font-weight: 500; }
     .complete { color: #4C956C; }
+    .warning { color: #f39c12; }
     .error { color: #e74c3c; }
+    .report {
+      display: none;
+      flex: 1;
+      min-height: 90px;
+      max-height: 140px;
+      overflow: auto;
+      border: 1px solid #303030;
+      border-radius: 6px;
+      background: #101010;
+      padding: 8px;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #bbb;
+      white-space: pre-wrap;
+      word-break: break-word;
+      -webkit-app-region: no-drag;
+    }
+    .report.visible {
+      display: block;
+    }
     .footer {
       display: flex;
       justify-content: flex-end;
+      gap: 8px;
       margin-top: auto;
-    }
-    .cancel-btn {
       -webkit-app-region: no-drag;
+    }
+    .btn {
       background: #333;
-      color: #999;
+      color: #ddd;
       border: 1px solid #444;
-      padding: 8px 20px;
+      padding: 8px 14px;
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
       transition: all 0.2s;
     }
-    .cancel-btn:hover {
+    .btn:hover {
       background: #444;
       color: #fff;
       border-color: #555;
     }
-    .cancel-btn.hidden { display: none; }
+    .btn.hidden { display: none; }
+    .btn-primary {
+      background: #2C6E49;
+      border-color: #2C6E49;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #338356;
+      border-color: #338356;
+    }
   </style>
 </head>
 <body>
@@ -153,6 +193,7 @@
     <div class="spinner" id="spinner"></div>
     <div class="title" id="title">Uploading to Google Drive...</div>
   </div>
+
   <div class="locations">
     <div class="location-row">
       <span class="location-label">From:</span>
@@ -163,41 +204,99 @@
       <span class="location-path" id="toPath">Google Drive</span>
     </div>
   </div>
+
+  <div class="preflight" id="preflightSummary">Preparing pre-flight analysis...</div>
+
   <div class="progress-container">
     <div class="progress-bar">
       <div class="progress-fill" id="progressFill"></div>
     </div>
     <div class="progress-text" id="progressText">0%</div>
   </div>
+
   <div class="current-file" id="currentFile">Preparing...</div>
+
   <div class="stats">
     <span id="fileCount">0 / 0 files</span>
     <span id="dataTransferred">0 B / 0 B</span>
   </div>
+
   <div class="speed-stats">
     <span>Speed: <span class="speed" id="transferSpeed">--</span></span>
+    <span>Remaining: <span class="speed" id="etaValue">--</span></span>
+    <span>Finishes: <span class="speed" id="finishAt">--</span></span>
   </div>
+
+  <div class="report" id="reportBox"></div>
+
   <div class="footer">
-    <button class="cancel-btn" id="cancelBtn">Cancel</button>
+    <button class="btn hidden" id="retryBtn">Retry Failed</button>
+    <button class="btn" id="pauseBtn">Pause</button>
+    <button class="btn btn-primary" id="cancelBtn">Cancel</button>
   </div>
 
   <script>
     const { ipcRenderer } = require('electron');
 
-    document.getElementById('cancelBtn').addEventListener('click', () => {
-      const cancelBtn = document.getElementById('cancelBtn');
+    let isPaused = false;
+    let hasCompleted = false;
+    let hasFailed = false;
+
+    const cancelBtn = document.getElementById('cancelBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const retryBtn = document.getElementById('retryBtn');
+    const reportBox = document.getElementById('reportBox');
+
+    cancelBtn.addEventListener('click', () => {
+      if (hasCompleted || hasFailed) {
+        ipcRenderer.send('sync-close-window');
+        window.close();
+        return;
+      }
       cancelBtn.disabled = true;
       cancelBtn.textContent = 'Cancelling...';
       ipcRenderer.send('sync-cancel');
     });
 
+    pauseBtn.addEventListener('click', () => {
+      if (hasCompleted || hasFailed) return;
+      if (isPaused) {
+        ipcRenderer.send('sync-resume');
+      } else {
+        ipcRenderer.send('sync-pause');
+      }
+    });
+
+    retryBtn.addEventListener('click', () => {
+      retryBtn.disabled = true;
+      retryBtn.textContent = 'Queued...';
+      ipcRenderer.send('sync-retry-failed');
+    });
+
     ipcRenderer.on('sync-init', (event, data) => {
+      const mode = data.mode === 'copy' ? 'Copying' : 'Syncing';
+      document.getElementById('title').textContent = `${mode} to Google Drive...`;
       document.getElementById('fromPath').textContent = data.folderPath;
       document.getElementById('toPath').textContent = 'Google Drive / ' + data.folderPath.split(/[/\\]/).pop();
+      if ((data.queueLength || 0) > 0) {
+        document.getElementById('preflightSummary').textContent =
+          `Queue: ${data.queueLength + 1} jobs total (including this one). Running pre-flight...`;
+      }
+    });
+
+    ipcRenderer.on('sync-state', (event, data) => {
+      isPaused = Boolean(data.paused);
+      pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
+      document.getElementById('title').textContent = isPaused ? 'Paused' : 'Uploading to Google Drive...';
+      if (isPaused) {
+        document.getElementById('title').classList.add('warning');
+      } else {
+        document.getElementById('title').classList.remove('warning');
+      }
     });
 
     function formatBytes(bytes) {
-      if (bytes === 0) return '0 B';
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
       const k = 1024;
       const sizes = ['B', 'KB', 'MB', 'GB'];
       const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -205,21 +304,74 @@
     }
 
     function formatSpeed(bytesPerSecond) {
-      if (bytesPerSecond === 0) return '--';
+      if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '--';
       if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s';
       if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s';
       return (bytesPerSecond / (1024 * 1024)).toFixed(2) + ' MB/s';
     }
 
+    function formatDuration(totalSeconds) {
+      if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds)) {
+        return '--';
+      }
+      const seconds = Math.max(0, Math.round(totalSeconds));
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remSeconds = seconds % 60;
+      if (minutes < 60) return `${minutes}m ${remSeconds}s`;
+      const hours = Math.floor(minutes / 60);
+      const remMinutes = minutes % 60;
+      return `${hours}h ${remMinutes}m`;
+    }
+
+    function formatFinishTime(isoTime) {
+      if (!isoTime) return '--';
+      const date = new Date(isoTime);
+      if (Number.isNaN(date.getTime())) return '--';
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatPreflight(preflight) {
+      if (!preflight) return 'Preparing pre-flight analysis...';
+      const predicted = formatDuration(preflight.predictedDurationSeconds);
+      return `Pre-flight: ${preflight.newFiles} new, ${preflight.changedFiles} changed, ` +
+        `${preflight.skippedFiles} skipped, upload ${formatBytes(preflight.bytesToUpload)} ` +
+        `(est. ${predicted})`;
+    }
+
+    function showReport(text) {
+      reportBox.classList.add('visible');
+      reportBox.textContent = text;
+    }
+
     ipcRenderer.on('sync-progress', (event, data) => {
-      const percent = Math.round((data.current / data.total) * 100);
-      document.getElementById('progressFill').style.width = percent + '%';
-      document.getElementById('progressText').textContent = percent + '%';
-      document.getElementById('fileCount').textContent = `${data.current} / ${data.total} files`;
-      if (data.currentFile) {
+      if (data.preflight) {
+        document.getElementById('preflightSummary').textContent = formatPreflight(data.preflight);
+      }
+
+      if (data.phase === 'scheduled-wait') {
+        const waitUntil = data.scheduleWaitingUntil ? formatFinishTime(data.scheduleWaitingUntil) : '--';
+        document.getElementById('currentFile').textContent = `Waiting for schedule window (next: ${waitUntil})`;
+      } else if (data.phase === 'retrying') {
+        const attempt = data.retryAttempt || 1;
+        const max = data.retryMaxAttempts || 1;
+        const retryIn = formatDuration((data.retryDelayMs || 0) / 1000);
+        document.getElementById('currentFile').textContent =
+          `Retrying ${data.currentFile || ''} (${attempt}/${max}) in ${retryIn}`;
+      } else if (data.currentFile) {
         document.getElementById('currentFile').textContent = 'Uploading: ' + data.currentFile;
       }
-      // Update transfer stats
+
+      const percent = data.total > 0 ? Math.round((data.current / data.total) * 100) : 100;
+      document.getElementById('progressFill').style.width = percent + '%';
+      document.getElementById('progressText').textContent = percent + '%';
+
+      const uploadedCount = data.uploadedCount || 0;
+      const skippedCount = data.skippedCount || 0;
+      const failedCount = data.failedCount || 0;
+      document.getElementById('fileCount').textContent =
+        `${uploadedCount} uploaded, ${skippedCount} skipped, ${failedCount} failed`;
+
       if (data.uploadedBytes !== undefined && data.totalBytes !== undefined) {
         document.getElementById('dataTransferred').textContent =
           `${formatBytes(data.uploadedBytes)} / ${formatBytes(data.totalBytes)}`;
@@ -227,39 +379,102 @@
       if (data.bytesPerSecond !== undefined) {
         document.getElementById('transferSpeed').textContent = formatSpeed(data.bytesPerSecond);
       }
+      document.getElementById('etaValue').textContent = formatDuration(data.etaSeconds);
+      document.getElementById('finishAt').textContent = formatFinishTime(data.estimatedCompletion);
     });
 
     ipcRenderer.on('sync-complete', (event, data) => {
+      hasCompleted = true;
+      hasFailed = false;
+      pauseBtn.classList.add('hidden');
       document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = '✓ Upload Complete!';
+      document.getElementById('title').textContent = 'Upload Complete';
       document.getElementById('title').classList.add('complete');
       document.getElementById('progressFill').style.width = '100%';
       document.getElementById('progressFill').style.animation = 'none';
       document.getElementById('progressFill').style.background = '#4C956C';
       document.getElementById('progressText').textContent = '100%';
-      document.getElementById('currentFile').textContent = 'Link copied to clipboard!';
-      document.getElementById('currentFile').classList.add('complete');
-      document.getElementById('fileCount').textContent = data.filesUploaded + ' files uploaded';
+
+      const skipped = data.filesSkipped || 0;
+      const failed = data.filesFailed || 0;
+      const total = data.totalFiles || data.filesUploaded;
+      document.getElementById('fileCount').textContent =
+        `${data.filesUploaded} uploaded, ${skipped} skipped, ${failed} failed (${total} total)`;
+
       document.getElementById('transferSpeed').textContent = 'Complete';
-      document.getElementById('cancelBtn').classList.add('hidden');
-      setTimeout(() => window.close(), 3000);
+      document.getElementById('etaValue').textContent = '0s';
+      document.getElementById('finishAt').textContent = 'Now';
+
+      const preflight = data.preflight || null;
+      if (preflight) {
+        document.getElementById('preflightSummary').textContent = formatPreflight(preflight);
+      }
+
+      const reportLines = [
+        `Mode: ${data.mode || 'sync'}`,
+        `Folder: ${data.folderPath || '-'}`,
+        `Uploaded: ${data.filesUploaded || 0}`,
+        `Skipped: ${data.filesSkipped || 0}`,
+        `Failed: ${data.filesFailed || 0}`,
+        `Conflicts handled: ${data.conflictCount || 0}`,
+        `Integrity checks: ${data.verifyCheckedCount || 0} (failed ${data.verifyFailedCount || 0})`
+      ];
+
+      const failedFiles = Array.isArray(data.failedFiles) ? data.failedFiles : [];
+      if (failedFiles.length > 0) {
+        reportLines.push('', 'Failed paths:');
+        failedFiles.forEach((f, idx) => {
+          reportLines.push(`${idx + 1}. ${f.relativePath || f.localPath || 'unknown'} - ${f.error || 'error'}`);
+        });
+      }
+      showReport(reportLines.join('\n'));
+
+      if (failedFiles.length > 0) {
+        retryBtn.classList.remove('hidden');
+        retryBtn.disabled = false;
+        retryBtn.textContent = 'Retry Failed';
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = 'Close';
+        document.getElementById('currentFile').textContent = 'Some files failed. Retry failed files or close.';
+        document.getElementById('currentFile').classList.add('warning');
+      } else {
+        retryBtn.classList.add('hidden');
+        cancelBtn.classList.add('hidden');
+        document.getElementById('currentFile').textContent = 'Upload finished successfully. Link copied to clipboard.';
+        document.getElementById('currentFile').classList.add('complete');
+        setTimeout(() => window.close(), 2200);
+      }
+    });
+
+    ipcRenderer.on('sync-retry-queued', (event, data) => {
+      document.getElementById('currentFile').textContent =
+        `Queued retry for ${data.count || 0} failed file(s).`;
+      setTimeout(() => window.close(), 800);
     });
 
     ipcRenderer.on('sync-error', (event, data) => {
+      hasFailed = true;
+      pauseBtn.classList.add('hidden');
+      retryBtn.classList.add('hidden');
       document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = '✗ Upload Failed';
+      document.getElementById('title').textContent = 'Upload Failed';
       document.getElementById('title').classList.add('error');
       document.getElementById('currentFile').textContent = data.error;
       document.getElementById('currentFile').classList.add('error');
-      document.getElementById('cancelBtn').textContent = 'Close';
-      document.getElementById('cancelBtn').disabled = false;
+      cancelBtn.textContent = 'Close';
+      cancelBtn.disabled = false;
+      showReport(`Error details:\n${data.error || 'Unknown error'}`);
     });
 
     ipcRenderer.on('sync-cancelled', () => {
+      hasFailed = true;
+      pauseBtn.classList.add('hidden');
+      retryBtn.classList.add('hidden');
       document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Sync cancelled';
+      document.getElementById('title').textContent = 'Sync Cancelled';
       document.getElementById('currentFile').textContent = 'Upload was cancelled.';
-      setTimeout(() => window.close(), 700);
+      cancelBtn.textContent = 'Close';
+      cancelBtn.disabled = false;
     });
   </script>
 </body>

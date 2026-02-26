@@ -19,11 +19,27 @@ const refreshDriveFoldersBtn = document.getElementById('refreshDriveFoldersBtn')
 const cancelMappingBtn = document.getElementById('cancelMappingBtn');
 const saveMappingBtn = document.getElementById('saveMappingBtn');
 const showNotifications = document.getElementById('showNotifications');
+const verifyUploads = document.getElementById('verifyUploads');
+const uploadScheduleEnabled = document.getElementById('uploadScheduleEnabled');
+const autoResumeInterruptedSync = document.getElementById('autoResumeInterruptedSync');
+const retryMaxAttempts = document.getElementById('retryMaxAttempts');
+const verifySampleRatePercent = document.getElementById('verifySampleRatePercent');
+const uploadBandwidthLimitKbps = document.getElementById('uploadBandwidthLimitKbps');
+const uploadScheduleStart = document.getElementById('uploadScheduleStart');
+const uploadScheduleEnd = document.getElementById('uploadScheduleEnd');
 
 let settings = {
   folderMappings: [],
   autoUpload: true,
   showNotifications: true,
+  retryMaxAttempts: 3,
+  verifyUploads: true,
+  verifySampleRate: 0.2,
+  uploadBandwidthLimitKbps: 0,
+  uploadScheduleEnabled: false,
+  uploadScheduleStart: '00:00',
+  uploadScheduleEnd: '23:59',
+  autoResumeInterruptedSync: true,
   isAuthenticated: false
 };
 
@@ -34,6 +50,21 @@ async function init() {
   updateContextMenuUI();
   renderMappings();
   showNotifications.checked = settings.showNotifications;
+  verifyUploads.checked = settings.verifyUploads !== false;
+  uploadScheduleEnabled.checked = settings.uploadScheduleEnabled === true;
+  autoResumeInterruptedSync.checked = settings.autoResumeInterruptedSync !== false;
+  retryMaxAttempts.value = settings.retryMaxAttempts || 3;
+  verifySampleRatePercent.value = Math.round((settings.verifySampleRate || 0) * 100);
+  uploadBandwidthLimitKbps.value = settings.uploadBandwidthLimitKbps || 0;
+  uploadScheduleStart.value = settings.uploadScheduleStart || '00:00';
+  uploadScheduleEnd.value = settings.uploadScheduleEnd || '23:59';
+  applySettingControlState();
+}
+
+function applySettingControlState() {
+  verifySampleRatePercent.disabled = !verifyUploads.checked;
+  uploadScheduleStart.disabled = !uploadScheduleEnabled.checked;
+  uploadScheduleEnd.disabled = !uploadScheduleEnabled.checked;
 }
 
 async function updateContextMenuUI() {
@@ -366,6 +397,49 @@ showNotifications.addEventListener('change', async () => {
   await window.api.saveSettings({ showNotifications: settings.showNotifications });
 });
 
+async function saveSyncSettings() {
+  const retryParsed = parseInt(retryMaxAttempts.value || '3', 10);
+  settings.retryMaxAttempts = Math.max(1, Math.min(10, Number.isFinite(retryParsed) ? retryParsed : 3));
+  settings.verifyUploads = verifyUploads.checked;
+  const sampleParsed = parseFloat(verifySampleRatePercent.value || '0');
+  const sampleRate = Number.isFinite(sampleParsed) ? sampleParsed / 100 : 0.2;
+  settings.verifySampleRate = Math.max(0, Math.min(1, sampleRate));
+  const bandwidthParsed = parseInt(uploadBandwidthLimitKbps.value || '0', 10);
+  settings.uploadBandwidthLimitKbps = Math.max(0, Number.isFinite(bandwidthParsed) ? bandwidthParsed : 0);
+  settings.uploadScheduleEnabled = uploadScheduleEnabled.checked;
+  settings.uploadScheduleStart = uploadScheduleStart.value || '00:00';
+  settings.uploadScheduleEnd = uploadScheduleEnd.value || '23:59';
+  settings.autoResumeInterruptedSync = autoResumeInterruptedSync.checked;
+
+  await window.api.saveSettings({
+    retryMaxAttempts: settings.retryMaxAttempts,
+    verifyUploads: settings.verifyUploads,
+    verifySampleRate: settings.verifySampleRate,
+    uploadBandwidthLimitKbps: settings.uploadBandwidthLimitKbps,
+    uploadScheduleEnabled: settings.uploadScheduleEnabled,
+    uploadScheduleStart: settings.uploadScheduleStart,
+    uploadScheduleEnd: settings.uploadScheduleEnd,
+    autoResumeInterruptedSync: settings.autoResumeInterruptedSync
+  });
+}
+
+verifyUploads.addEventListener('change', async () => {
+  applySettingControlState();
+  await saveSyncSettings();
+});
+
+uploadScheduleEnabled.addEventListener('change', async () => {
+  applySettingControlState();
+  await saveSyncSettings();
+});
+
+autoResumeInterruptedSync.addEventListener('change', saveSyncSettings);
+retryMaxAttempts.addEventListener('change', saveSyncSettings);
+verifySampleRatePercent.addEventListener('change', saveSyncSettings);
+uploadBandwidthLimitKbps.addEventListener('change', saveSyncSettings);
+uploadScheduleStart.addEventListener('change', saveSyncSettings);
+uploadScheduleEnd.addEventListener('change', saveSyncSettings);
+
 // Close modal on outside click
 addMappingModal.addEventListener('click', (e) => {
   if (e.target === addMappingModal) {
@@ -385,7 +459,7 @@ document.getElementById('exclusionModal').addEventListener('click', (e) => {
 
 // Window controls
 document.getElementById('minimizeBtn').addEventListener('click', () => window.api.minimizeWindow());
-document.getElementById('maximizeBtn').addEventListener('click', () => window.api.maximizeWindow());
+document.getElementById('maximizeBtn').style.display = 'none';
 document.getElementById('closeBtn').addEventListener('click', () => window.api.closeWindow());
 
 // Initialize app

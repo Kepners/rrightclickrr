@@ -22,12 +22,14 @@ class SyncTracker {
    * @param {string} driveId - Google Drive file/folder ID
    * @param {string} driveUrl - Google Drive web URL
    * @param {string} type - 'folder' or 'file'
+   * @param {object|null} metadata - Optional sync metadata (sizeBytes, mtimeMs)
    */
-  trackSync(localPath, driveId, driveUrl, type = 'folder') {
+  trackSync(localPath, driveId, driveUrl, type = 'folder', metadata = null) {
     const normalized = this.normalizePath(localPath);
     const syncedItems = this.store.get('syncedItems');
-
-    syncedItems[normalized] = {
+    const existing = syncedItems[normalized] || {};
+    const payload = {
+      ...existing,
       driveId,
       driveUrl,
       type,
@@ -35,8 +37,46 @@ class SyncTracker {
       localPath: localPath
     };
 
+    if (metadata && typeof metadata === 'object') {
+      if (Number.isFinite(metadata.sizeBytes)) {
+        payload.sizeBytes = metadata.sizeBytes;
+      }
+      if (Number.isFinite(metadata.mtimeMs)) {
+        payload.mtimeMs = metadata.mtimeMs;
+      }
+      if (typeof metadata.remoteModifiedTime === 'string' && metadata.remoteModifiedTime) {
+        payload.remoteModifiedTime = metadata.remoteModifiedTime;
+      }
+      if (Number.isFinite(metadata.remoteSize)) {
+        payload.remoteSize = metadata.remoteSize;
+      }
+      if (typeof metadata.remoteMd5 === 'string' && metadata.remoteMd5) {
+        payload.remoteMd5 = metadata.remoteMd5;
+      }
+    }
+
+    syncedItems[normalized] = payload;
+
     this.store.set('syncedItems', syncedItems);
     this.persistSyncedPathIndex();
+  }
+
+  /**
+   * Check whether a file is unchanged since last successful sync.
+   * @param {string} localPath - Full local path
+   * @param {number} sizeBytes - Current file size
+   * @param {number} mtimeMs - Current file modified timestamp
+   * @returns {boolean}
+   */
+  isFileUpToDate(localPath, sizeBytes, mtimeMs) {
+    const info = this.getSyncInfo(localPath);
+    if (!info || info.type !== 'file' || !info.driveId) {
+      return false;
+    }
+    if (!Number.isFinite(info.sizeBytes) || !Number.isFinite(info.mtimeMs)) {
+      return false;
+    }
+    return info.sizeBytes === sizeBytes && Math.round(info.mtimeMs) === Math.round(mtimeMs);
   }
 
   /**

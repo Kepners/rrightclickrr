@@ -3,10 +3,8 @@ node_modules/
 
 # Build output
 dist/
+dist-*/
 dist2/
-dist-release/
-dist-new/
-dist-release-*/
 out/
 
 # Electron runtime files at project root (for dev testing)

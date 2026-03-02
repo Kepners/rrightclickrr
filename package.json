@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node scripts/launch.js .",
     "dev": "node scripts/launch.js . --dev",
+    "dist:consolidate": "node scripts/consolidate-dist.js",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "pack": "electron-builder --dir",

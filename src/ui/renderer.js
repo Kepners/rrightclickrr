@@ -20,6 +20,7 @@ const refreshDriveFoldersBtn = document.getElementById('refreshDriveFoldersBtn')
 const cancelMappingBtn = document.getElementById('cancelMappingBtn');
 const saveMappingBtn = document.getElementById('saveMappingBtn');
 const showNotifications = document.getElementById('showNotifications');
+const launchOnStartup = document.getElementById('launchOnStartup');
 const verifyUploads = document.getElementById('verifyUploads');
 const uploadScheduleEnabled = document.getElementById('uploadScheduleEnabled');
 const autoResumeInterruptedSync = document.getElementById('autoResumeInterruptedSync');
@@ -31,6 +32,7 @@ const uploadScheduleEnd = document.getElementById('uploadScheduleEnd');
 
 let settings = {
   folderMappings: [],
+  launchOnStartup: true,
   autoUpload: true,
   showNotifications: true,
   retryMaxAttempts: 3,
@@ -53,6 +55,7 @@ async function init() {
   updateContextMenuUI();
   renderMappings();
   showNotifications.checked = settings.showNotifications;
+  launchOnStartup.checked = settings.launchOnStartup !== false;
   verifyUploads.checked = settings.verifyUploads !== false;
   uploadScheduleEnabled.checked = settings.uploadScheduleEnabled === true;
   autoResumeInterruptedSync.checked = settings.autoResumeInterruptedSync !== false;
@@ -429,6 +432,10 @@ saveMappingBtn.addEventListener('click', async () => {
 showNotifications.addEventListener('change', async () => {
   settings.showNotifications = showNotifications.checked;
   await window.api.saveSettings({ showNotifications: settings.showNotifications });
+});
+launchOnStartup.addEventListener('change', async () => {
+  settings.launchOnStartup = launchOnStartup.checked;
+  await window.api.saveSettings({ launchOnStartup: settings.launchOnStartup });
 });
 
 async function saveSyncSettings() {

@@ -119,6 +119,7 @@ if (!gotTheLock) {
     defaults: {
       folderMappings: [],
       lastDriveFolder: null,
+      launchOnStartup: true,
       autoUpload: true,
       showNotifications: true,
       syncQueue: [],
@@ -152,6 +153,36 @@ if (!gotTheLock) {
     const right = normalizeExcludePaths(b);
     if (left.length !== right.length) return false;
     return left.every((item, idx) => item === right[idx]);
+  }
+
+  function applyLaunchOnStartupSetting(enabled) {
+    if (process.platform !== 'win32') {
+      return;
+    }
+
+    // Avoid polluting developer machines with login entries in unpackaged runs.
+    if (!app.isPackaged) {
+      safeLog('Skipping startup registration in development mode');
+      return;
+    }
+
+    const shouldLaunch = Boolean(enabled);
+
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: shouldLaunch,
+        path: process.execPath,
+        args: ['--background-startup']
+      });
+
+      const loginItem = app.getLoginItemSettings({
+        path: process.execPath,
+        args: ['--background-startup']
+      });
+      safeLog('Startup launch setting applied:', `requested=${shouldLaunch}`, `effective=${Boolean(loginItem?.openAtLogin)}`);
+    } catch (error) {
+      safeLog('Failed to apply startup launch setting:', error.message);
+    }
   }
 
   function syncWatchersWithMappings(nextMappings = []) {
@@ -1041,6 +1072,7 @@ if (!gotTheLock) {
 
     return {
       folderMappings: store.get('folderMappings'),
+      launchOnStartup: store.get('launchOnStartup'),
       autoUpload: store.get('autoUpload'),
       showNotifications: store.get('showNotifications'),
       retryMaxAttempts: store.get('retryMaxAttempts'),
@@ -1068,6 +1100,11 @@ if (!gotTheLock) {
       store.set('folderMappings', settings.folderMappings);
       syncWatchersWithMappings(settings.folderMappings);
       updateTrayTooltip();
+    }
+    if (settings.launchOnStartup !== undefined) {
+      const launchOnStartup = Boolean(settings.launchOnStartup);
+      store.set('launchOnStartup', launchOnStartup);
+      applyLaunchOnStartupSetting(launchOnStartup);
     }
     if (settings.autoUpload !== undefined) {
       store.set('autoUpload', settings.autoUpload);
@@ -1315,6 +1352,7 @@ if (!gotTheLock) {
   app.whenReady().then(async () => {
     // Switch to proper logging directory
     initLogging(app);
+    applyLaunchOnStartupSetting(store.get('launchOnStartup') !== false);
 
     // Recover persisted queue/session state from previous run.
     recoverInterruptedSyncSession();
@@ -1401,9 +1439,12 @@ if (!gotTheLock) {
     processSyncQueue();
 
     // Show window on first run
-    if (!store.get('hasRunBefore')) {
+    const startedInBackground = process.argv.includes('--background-startup');
+    if (!store.get('hasRunBefore') && !startedInBackground) {
       store.set('hasRunBefore', true);
       createWindow();
+    } else if (!store.get('hasRunBefore')) {
+      store.set('hasRunBefore', true);
     }
   });
 

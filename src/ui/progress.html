@@ -352,6 +352,8 @@
       if (data.phase === 'scheduled-wait') {
         const waitUntil = data.scheduleWaitingUntil ? formatFinishTime(data.scheduleWaitingUntil) : '--';
         document.getElementById('currentFile').textContent = `Waiting for schedule window (next: ${waitUntil})`;
+      } else if (data.phase === 'download') {
+        document.getElementById('currentFile').textContent = `Downloading from Drive: ${data.currentFile || ''}`;
       } else if (data.phase === 'retrying') {
         const attempt = data.retryAttempt || 1;
         const max = data.retryMaxAttempts || 1;
@@ -367,10 +369,11 @@
       document.getElementById('progressText').textContent = percent + '%';
 
       const uploadedCount = data.uploadedCount || 0;
+      const downloadedCount = data.downloadedCount || 0;
       const skippedCount = data.skippedCount || 0;
       const failedCount = data.failedCount || 0;
       document.getElementById('fileCount').textContent =
-        `${uploadedCount} uploaded, ${skippedCount} skipped, ${failedCount} failed`;
+        `${uploadedCount} uploaded, ${downloadedCount} downloaded, ${skippedCount} skipped, ${failedCount} failed`;
 
       if (data.uploadedBytes !== undefined && data.totalBytes !== undefined) {
         document.getElementById('dataTransferred').textContent =
@@ -388,18 +391,20 @@
       hasFailed = false;
       pauseBtn.classList.add('hidden');
       document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Upload Complete';
+      const completeLabel = data.mode === 'copy' ? 'Copy Complete' : 'Sync Complete';
+      document.getElementById('title').textContent = completeLabel;
       document.getElementById('title').classList.add('complete');
       document.getElementById('progressFill').style.width = '100%';
       document.getElementById('progressFill').style.animation = 'none';
       document.getElementById('progressFill').style.background = '#4C956C';
       document.getElementById('progressText').textContent = '100%';
 
+      const downloaded = data.filesDownloaded || 0;
       const skipped = data.filesSkipped || 0;
       const failed = data.filesFailed || 0;
       const total = data.totalFiles || data.filesUploaded;
       document.getElementById('fileCount').textContent =
-        `${data.filesUploaded} uploaded, ${skipped} skipped, ${failed} failed (${total} total)`;
+        `${data.filesUploaded} uploaded, ${downloaded} downloaded, ${skipped} skipped, ${failed} failed (${total} local files)`;
 
       document.getElementById('transferSpeed').textContent = 'Complete';
       document.getElementById('etaValue').textContent = '0s';
@@ -414,6 +419,7 @@
         `Mode: ${data.mode || 'sync'}`,
         `Folder: ${data.folderPath || '-'}`,
         `Uploaded: ${data.filesUploaded || 0}`,
+        `Downloaded: ${data.filesDownloaded || 0}`,
         `Skipped: ${data.filesSkipped || 0}`,
         `Failed: ${data.filesFailed || 0}`,
         `Conflicts handled: ${data.conflictCount || 0}`,

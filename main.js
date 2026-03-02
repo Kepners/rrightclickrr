@@ -681,6 +681,9 @@ if (!gotTheLock) {
 
       progressWindow.loadFile(path.join(__dirname, 'src', 'ui', 'progress.html'));
       progressWindow.webContents.on('did-finish-load', () => {
+        if (!progressWindow || progressWindow.isDestroyed()) {
+          return;
+        }
         try {
           const workArea = screen.getPrimaryDisplay().workArea;
           const x = Math.round(workArea.x + ((workArea.width - 560) / 2));
@@ -736,7 +739,8 @@ if (!gotTheLock) {
 
       const runtimeOptions = {
         ...getSyncRuntimeOptions(),
-        onlyFiles: job.onlyFiles || []
+        onlyFiles: job.onlyFiles || [],
+        syncMode: job.mode
       };
 
       const result = await folderSync.syncFolder(job.folderPath, (progress) => {
@@ -812,9 +816,11 @@ if (!gotTheLock) {
         startedAt: new Date(startedMs).toISOString(),
         completedAt: new Date().toISOString(),
         filesUploaded: result.filesUploaded,
+        filesDownloaded: result.filesDownloaded || 0,
         filesSkipped: result.filesSkipped || 0,
         filesFailed: result.filesFailed || 0,
         totalFiles: result.totalFiles || result.filesUploaded,
+        downloadedFiles: result.downloadedFiles || [],
         failedFiles: result.failedFiles || [],
         preflight: result.preflight || null,
         conflictCount: result.conflictCount || 0,
@@ -981,6 +987,18 @@ if (!gotTheLock) {
     );
   }
 
+  function hasShellCommandArg(args = []) {
+    const commandFlags = [
+      '--sync-folder',
+      '--sync',
+      '--copy-folder',
+      '--copy',
+      '--get-url',
+      '--open-drive'
+    ];
+    return commandFlags.some((flag) => args.includes(flag));
+  }
+
   // Handle command line arguments (from context menu)
   function handleArgs(argv) {
     // Helper to find a path argument (doesn't start with --)
@@ -1046,6 +1064,9 @@ if (!gotTheLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else if (!argv.includes('--background-startup') && !hasShellCommandArg(argv)) {
+      // If a user launches the app while it's already in the tray, open settings.
+      createWindow();
     }
   });
 
@@ -1438,13 +1459,16 @@ if (!gotTheLock) {
     // Start queue processing if any jobs exist and auth is ready.
     processSyncQueue();
 
-    // Show window on first run
+    // Show window for direct user launches, but keep shell-triggered/background runs headless.
     const startedInBackground = process.argv.includes('--background-startup');
-    if (!store.get('hasRunBefore') && !startedInBackground) {
+    const launchedFromShellCommand = hasShellCommandArg(process.argv);
+
+    if (!store.get('hasRunBefore')) {
       store.set('hasRunBefore', true);
+    }
+
+    if (!startedInBackground && !launchedFromShellCommand) {
       createWindow();
-    } else if (!store.get('hasRunBefore')) {
-      store.set('hasRunBefore', true);
     }
   });
 

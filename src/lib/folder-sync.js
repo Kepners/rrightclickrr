@@ -155,6 +155,7 @@ class FolderSync {
       bytesToUpload,
       startTime: Date.now(),
       uploadedCount: 0,
+      downloadedCount: 0,
       skippedCount: 0,
       failedCount: 0,
       paused: this.paused,
@@ -163,6 +164,7 @@ class FolderSync {
 
     let processedCount = 0;
     let uploadedCount = 0;
+    let downloadedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
     let conflictCount = 0;
@@ -171,6 +173,7 @@ class FolderSync {
     let uploadedBytes = 0;
     const startTime = Date.now();
     const uploadedFiles = []; // Track all uploaded files with their Drive IDs
+    const downloadedFiles = []; // Track files pulled from Drive to local
     const failedFiles = [];
 
     // Reuse exact mapping target if it already exists to avoid nested Folder/Folder creation.
@@ -202,6 +205,7 @@ class FolderSync {
         bytesToUpload,
         startTime,
         uploadedCount,
+        downloadedCount,
         skippedCount,
         failedCount
       });
@@ -228,6 +232,7 @@ class FolderSync {
           bytesToUpload,
           startTime,
           uploadedCount,
+          downloadedCount,
           skippedCount,
           failedCount,
           paused: this.paused
@@ -251,6 +256,7 @@ class FolderSync {
           bytesToUpload,
           startTime,
           uploadedCount,
+          downloadedCount,
           skippedCount,
           failedCount
         });
@@ -337,6 +343,7 @@ class FolderSync {
               bytesToUpload,
               startTime,
               uploadedCount,
+              downloadedCount,
               skippedCount,
               failedCount,
               paused: this.paused,
@@ -371,10 +378,39 @@ class FolderSync {
         bytesToUpload,
         startTime,
         uploadedCount,
+        downloadedCount,
         skippedCount,
         failedCount,
         paused: this.paused
       });
+    }
+
+    // For full sync runs, also pull Drive-only files to local (missing files only).
+    const shouldPullFromDrive = runOptions.syncMode === 'sync' && runOptions.onlyFiles.size === 0;
+    if (shouldPullFromDrive && !this.cancelled && !this.abortController.signal.aborted) {
+      const pullResult = await this.downloadMissingFromDrive(
+        localFolderPath,
+        rootFolderId,
+        onProgress,
+        {
+          current: processedCount,
+          total: totalFiles,
+          uploadedBytes,
+          totalBytes,
+          bytesToUpload,
+          startTime,
+          uploadedCount,
+          downloadedCount,
+          skippedCount,
+          failedCount
+        },
+        runOptions
+      );
+
+      downloadedCount += pullResult.downloadedCount;
+      failedCount += pullResult.failedCount;
+      downloadedFiles.push(...pullResult.downloadedFiles);
+      failedFiles.push(...pullResult.failedFiles);
     }
 
     // Get share link for the root folder
@@ -385,7 +421,7 @@ class FolderSync {
       // Ignore errors getting share link
     }
 
-    this.log(`Sync complete: ${uploadedCount} uploaded, ${skippedCount} skipped, ${failedCount} failed`);
+    this.log(`Sync complete: ${uploadedCount} uploaded, ${downloadedCount} downloaded, ${skippedCount} skipped, ${failedCount} failed`);
     if (failedFiles.length > 0) {
       this.log(`Failed files:\n${failedFiles.map(f => ` - ${f.relativePath}: ${f.error}`).join('\n')}`);
     }
@@ -395,12 +431,14 @@ class FolderSync {
 
     return {
       filesUploaded: uploadedCount,
+      filesDownloaded: downloadedCount,
       filesSkipped: skippedCount,
       filesFailed: failedCount,
       totalFiles,
       folderId: rootFolderId,
       shareLink,
       uploadedFiles,
+      downloadedFiles,
       failedFiles,
       preflight,
       conflictCount,
@@ -444,8 +482,11 @@ class FolderSync {
       ? Math.max(0, Number(options.estimatedSpeedBps))
       : 0;
 
+    const syncMode = options.syncMode === 'copy' ? 'copy' : 'sync';
+
     return {
       onlyFiles,
+      syncMode,
       retryMaxAttempts,
       retryBaseDelayMs,
       retryMaxDelayMs,
@@ -559,6 +600,123 @@ class FolderSync {
     });
   }
 
+  async downloadMissingFromDrive(localFolderPath, rootFolderId, onProgress, state, runOptions) {
+    let downloadedCount = 0;
+    let failedCount = 0;
+    let scannedCount = 0;
+    let skippedExistingCount = 0;
+    const downloadedFiles = [];
+    const failedFiles = [];
+
+    let remoteFiles = [];
+    try {
+      remoteFiles = await this.driveUploader.listFilesRecursive(rootFolderId);
+    } catch (error) {
+      this.log(`ERROR listing Drive files for download pull: ${error.message}`);
+      return { downloadedCount, failedCount, scannedCount, skippedExistingCount, downloadedFiles, failedFiles };
+    }
+
+    this.log(`Drive pull preflight: scanned ${remoteFiles.length} remote files for missing-local download.`);
+
+    for (const remoteFile of remoteFiles) {
+      if (this.cancelled || this.abortController.signal.aborted) {
+        break;
+      }
+
+      scannedCount++;
+      const relativePosixPath = remoteFile?.relativePath || remoteFile?.name || '';
+      if (!relativePosixPath) {
+        continue;
+      }
+
+      const relativePath = relativePosixPath.split('/').join(path.sep);
+      if (this.isPathExcluded(relativePath.toLowerCase())) {
+        skippedExistingCount++;
+        continue;
+      }
+
+      const localPath = path.join(localFolderPath, ...relativePosixPath.split('/'));
+      if (fs.existsSync(localPath)) {
+        skippedExistingCount++;
+        continue;
+      }
+
+      await this.waitForScheduleWindow(runOptions, onProgress, {
+        current: state.current,
+        total: state.total,
+        uploadedBytes: state.uploadedBytes,
+        totalBytes: state.totalBytes,
+        bytesToUpload: state.bytesToUpload,
+        startTime: state.startTime,
+        uploadedCount: state.uploadedCount,
+        downloadedCount: state.downloadedCount + downloadedCount,
+        skippedCount: state.skippedCount,
+        failedCount: state.failedCount + failedCount
+      });
+      await this.waitIfPaused();
+
+      this.emitProgress(onProgress, {
+        phase: 'download',
+        current: state.current,
+        total: state.total,
+        currentFile: path.basename(localPath),
+        uploadedBytes: state.uploadedBytes,
+        totalBytes: state.totalBytes,
+        bytesToUpload: state.bytesToUpload,
+        startTime: state.startTime,
+        uploadedCount: state.uploadedCount,
+        downloadedCount: state.downloadedCount + downloadedCount,
+        skippedCount: state.skippedCount,
+        failedCount: state.failedCount + failedCount,
+        paused: this.paused
+      });
+
+      this.log(`Downloading missing remote file: ${relativePath}`);
+      try {
+        await this.driveUploader.downloadFile(remoteFile.id, localPath, this.abortController.signal);
+
+        const remoteModifiedMs = Date.parse(remoteFile?.modifiedTime || '');
+        if (Number.isFinite(remoteModifiedMs)) {
+          const when = new Date(remoteModifiedMs);
+          fs.utimesSync(localPath, when, when);
+        }
+
+        const stat = fs.statSync(localPath);
+        const driveUrl = remoteFile.webViewLink || `https://drive.google.com/file/d/${remoteFile.id}/view`;
+
+        this.recordFileSync(localPath, remoteFile.id, driveUrl, stat.size, stat.mtimeMs, {
+          modifiedTime: remoteFile.modifiedTime || null,
+          size: remoteFile.size || null,
+          md5Checksum: remoteFile.md5Checksum || null
+        });
+
+        downloadedFiles.push({
+          localPath,
+          relativePath,
+          driveId: remoteFile.id,
+          driveUrl,
+          sizeBytes: stat.size,
+          mtimeMs: stat.mtimeMs
+        });
+        downloadedCount++;
+      } catch (error) {
+        failedCount++;
+        failedFiles.push({
+          localPath,
+          relativePath,
+          error: error.message
+        });
+        this.log(`ERROR downloading missing remote file ${relativePath}: ${error.message}`);
+      }
+    }
+
+    this.log(
+      `Drive pull complete: ${downloadedCount} downloaded, ${skippedExistingCount} already local/excluded, ${failedCount} failed`
+    );
+
+    return { downloadedCount, failedCount, scannedCount, skippedExistingCount, downloadedFiles, failedFiles };
+  }
+
   emitProgress(onProgress, data) {
     if (!onProgress) {
       return;
@@ -582,6 +740,7 @@ class FolderSync {
       etaSeconds,
       estimatedCompletion: etaSeconds !== null ? new Date(Date.now() + etaSeconds * 1000).toISOString() : null,
       uploadedCount: data.uploadedCount,
+      downloadedCount: data.downloadedCount || 0,
       skippedCount: data.skippedCount,
       failedCount: data.failedCount,
       paused: Boolean(data.paused),
@@ -741,6 +900,7 @@ class FolderSync {
         bytesToUpload: state.bytesToUpload,
         startTime: state.startTime,
         uploadedCount: state.uploadedCount,
+        downloadedCount: state.downloadedCount || 0,
         skippedCount: state.skippedCount,
         failedCount: state.failedCount,
         paused: this.paused,

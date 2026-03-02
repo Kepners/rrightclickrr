@@ -36,7 +36,8 @@ class DriveUploader {
   constructor(googleAuth) {
     this.googleAuth = googleAuth;
     this.drive = null;
-    this.currentUploadStreams = []; // Track all streams for cancellation
+    // Track active upload/download streams so cancel can stop in-flight transfers.
+    this.currentUploadStreams = [];
   }
 
   getDrive() {
@@ -114,6 +115,57 @@ class DriveUploader {
     }
 
     return currentParentId;
+  }
+
+  async listChildren(parentId) {
+    const drive = this.getDrive();
+    const files = [];
+    let pageToken = undefined;
+
+    do {
+      const response = await drive.files.list({
+        q: `'${parentId}' in parents and trashed=false`,
+        fields: 'nextPageToken, files(id, name, mimeType, modifiedTime, size, md5Checksum, webViewLink)',
+        orderBy: 'name',
+        pageSize: 1000,
+        pageToken
+      });
+
+      files.push(...(response.data.files || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    return files;
+  }
+
+  async listFilesRecursive(rootFolderId) {
+    const queue = [{ folderId: rootFolderId, relativePath: '' }];
+    const files = [];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const children = await this.listChildren(current.folderId);
+
+      for (const item of children) {
+        if (!item?.id || !item?.name) continue;
+
+        const relativePath = current.relativePath
+          ? path.posix.join(current.relativePath, item.name)
+          : item.name;
+
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          queue.push({ folderId: item.id, relativePath });
+          continue;
+        }
+
+        files.push({
+          ...item,
+          relativePath
+        });
+      }
+    }
+
+    return files;
   }
 
   async uploadFile(filePath, parentId = 'root', optionsOrAbortSignal = null) {
@@ -219,6 +271,62 @@ class DriveUploader {
       }
     }
     this.currentUploadStreams = [];
+  }
+
+  async downloadFile(fileId, destinationPath, abortSignal = null) {
+    const drive = this.getDrive();
+    await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
+
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    const readStream = response.data;
+    const writeStream = fs.createWriteStream(destinationPath);
+    this.currentUploadStreams = [readStream, writeStream];
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const finalize = (err = null) => {
+        if (settled) return;
+        settled = true;
+        this.currentUploadStreams = [];
+        if (abortSignal && onAbort) {
+          abortSignal.removeEventListener('abort', onAbort);
+        }
+        if (err) {
+          try {
+            if (fs.existsSync(destinationPath)) {
+              fs.unlinkSync(destinationPath);
+            }
+          } catch {}
+          reject(err);
+          return;
+        }
+        resolve(destinationPath);
+      };
+
+      const onAbort = () => {
+        this.cancelCurrentUpload();
+        finalize(new Error('Download cancelled'));
+      };
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      readStream.on('error', finalize);
+      writeStream.on('error', finalize);
+      writeStream.on('finish', () => finalize(null));
+
+      readStream.pipe(writeStream);
+    });
   }
 
   async findFile(name, parentId = 'root') {

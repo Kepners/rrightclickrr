@@ -194,11 +194,81 @@ class FolderSync {
     // when many files share the same parent directory.
     const ensuredDirCache = new Map();
 
-    // Upload changed/new files only, while still reporting progress across all files.
-    for (const file of files) {
+    const remoteFileCache = new Map();
+
+    const getEnsuredDir = async (relativeDir) => {
+      if (!relativeDir || relativeDir === '.') {
+        return { folderId: rootFolderId, folderIds: [] };
+      }
+
+      if (!ensuredDirCache.has(relativeDir)) {
+        const pending = this.driveUploader.ensureFolderPathWithIds(relativeDir, rootFolderId)
+          .then(dirResult => {
+            this.recordFolderSyncs(localFolderPath, relativeDir, dirResult.folderIds);
+            return dirResult;
+          })
+          .catch(error => {
+            ensuredDirCache.delete(relativeDir);
+            throw error;
+          });
+        ensuredDirCache.set(relativeDir, pending);
+      }
+
+      return ensuredDirCache.get(relativeDir);
+    };
+
+    const getRemoteFilesForParent = async (parentId) => {
+      if (!remoteFileCache.has(parentId)) {
+        const pending = this.driveUploader.listChildren(parentId)
+          .then(children => {
+            const byName = new Map();
+            for (const item of children || []) {
+              if (!item?.id || !item?.name) continue;
+              if (item.mimeType === 'application/vnd.google-apps.folder') continue;
+              const key = item.name.toLowerCase();
+              if (!byName.has(key)) {
+                byName.set(key, item);
+              }
+            }
+            return byName;
+          })
+          .catch(error => {
+            remoteFileCache.delete(parentId);
+            throw error;
+          });
+        remoteFileCache.set(parentId, pending);
+      }
+
+      return remoteFileCache.get(parentId);
+    };
+
+    const rememberRemoteFile = async (parentId, uploadResult) => {
+      if (!uploadResult?.id || !uploadResult?.name || !remoteFileCache.has(parentId)) {
+        return;
+      }
+      const byName = await getRemoteFilesForParent(parentId);
+      const key = String(uploadResult.name).toLowerCase();
+      byName.set(key, {
+        ...(byName.get(key) || {}),
+        ...uploadResult
+      });
+    };
+
+    const uploadConcurrency = this.getUploadConcurrency(runOptions, totalFiles);
+    let nextFileIndex = 0;
+
+    const getNextFile = () => {
+      if (nextFileIndex >= files.length) {
+        return null;
+      }
+      const file = files[nextFileIndex];
+      nextFileIndex += 1;
+      return file;
+    };
+
+    const processFile = async (file) => {
       if (this.cancelled || this.abortController.signal.aborted) {
-        this.log('Sync cancelled - stopping upload loop');
-        break;
+        return;
       }
 
       await this.waitForScheduleWindow(runOptions, onProgress, {
@@ -241,7 +311,7 @@ class FolderSync {
           failedCount,
           paused: this.paused
         });
-        continue;
+        return;
       }
 
       let uploaded = false;
@@ -267,18 +337,8 @@ class FolderSync {
         await this.waitIfPaused();
 
         try {
-          // Ensure folder structure exists in Drive (cached per sync run)
-          let parentId = rootFolderId;
-          if (relativeDir && relativeDir !== '.') {
-            if (ensuredDirCache.has(relativeDir)) {
-              parentId = ensuredDirCache.get(relativeDir).folderId;
-            } else {
-              const dirResult = await this.driveUploader.ensureFolderPathWithIds(relativeDir, rootFolderId);
-              ensuredDirCache.set(relativeDir, dirResult);
-              this.recordFolderSyncs(localFolderPath, relativeDir, dirResult.folderIds);
-              parentId = dirResult.folderId;
-            }
-          }
+          const dirResult = await getEnsuredDir(relativeDir);
+          const parentId = dirResult.folderId;
 
           let conflictResolved = false;
           if (priorSync?.driveId) {
@@ -295,14 +355,26 @@ class FolderSync {
             }
           }
 
+          let existingFileId = priorSync?.driveId || null;
+          if (!existingFileId) {
+            try {
+              const remoteFiles = await getRemoteFilesForParent(parentId);
+              existingFileId = remoteFiles.get(path.basename(file).toLowerCase())?.id || null;
+            } catch (lookupError) {
+              this.log(`WARNING listing existing files for ${relativePath}: ${lookupError.message}`);
+            }
+          }
+
           this.log(`Uploading: ${relativePath} (attempt ${attempt}/${runOptions.retryMaxAttempts})`);
 
-          // Upload the file with abort signal for immediate cancellation
           const uploadResult = await this.driveUploader.uploadFile(file, parentId, {
             abortSignal: this.abortController.signal,
-            existingFileId: priorSync?.driveId || null,
-            bandwidthLimitBytesPerSec: runOptions.bandwidthLimitBytesPerSec
+            existingFileId,
+            bandwidthLimitBytesPerSec: runOptions.bandwidthLimitBytesPerSec,
+            skipLookup: true
           });
+
+          await rememberRemoteFile(parentId, uploadResult);
 
           const shouldVerify = this.shouldVerifyUpload(runOptions);
           if (shouldVerify) {
@@ -318,7 +390,6 @@ class FolderSync {
 
           const driveUrl = uploadResult.webViewLink || `https://drive.google.com/file/d/${uploadResult.id}/view`;
 
-          // Track this file
           uploadedFiles.push({
             localPath: file,
             relativePath,
@@ -394,7 +465,22 @@ class FolderSync {
         failedCount,
         paused: this.paused
       });
-    }
+    };
+
+    const workerCount = Math.max(1, Math.min(uploadConcurrency, totalFiles || 1));
+    this.log(`Upload concurrency: ${workerCount}`);
+
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (!this.cancelled && !this.abortController.signal.aborted) {
+        const file = getNextFile();
+        if (!file) {
+          return;
+        }
+        await processFile(file);
+      }
+    });
+
+    await Promise.all(workers);
 
     // For full sync runs, create any local subdirectories that had no files in them
     // (those would never be created via ensureFolderPath during file uploads).
@@ -516,6 +602,16 @@ class FolderSync {
       estimatedSpeedBps,
       conflictPolicy: options.conflictPolicy || 'keep-both-local-wins'
     };
+  }
+
+  getUploadConcurrency(options, totalFiles = 0) {
+    if ((Number(options?.bandwidthLimitBytesPerSec) || 0) > 0) {
+      return 1;
+    }
+    if (totalFiles <= 1) {
+      return 1;
+    }
+    return Math.min(4, totalFiles);
   }
 
   async classifyFileState(filePath, sizeBytes, mtimeMs, priorSync) {

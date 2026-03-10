@@ -36,8 +36,8 @@ class DriveUploader {
   constructor(googleAuth) {
     this.googleAuth = googleAuth;
     this.drive = null;
-    // Track active upload/download streams so cancel can stop in-flight transfers.
-    this.currentUploadStreams = [];
+    // Track all active upload/download streams so cancel can stop in-flight transfers.
+    this.activeTransferStreams = new Set();
   }
 
   getDrive() {
@@ -48,6 +48,19 @@ class DriveUploader {
       });
     }
     return this.drive;
+  }
+
+  trackActiveStream(stream) {
+    if (stream && typeof stream.destroy === 'function') {
+      this.activeTransferStreams.add(stream);
+    }
+    return stream;
+  }
+
+  untrackActiveStream(stream) {
+    if (stream) {
+      this.activeTransferStreams.delete(stream);
+    }
   }
 
   // Escape special characters for Drive query
@@ -196,41 +209,49 @@ class DriveUploader {
     let abortSignal = null;
     let existingFileId = null;
     let bandwidthLimitBytesPerSec = 0;
+    let skipLookup = false;
 
     if (
       optionsOrAbortSignal &&
       typeof optionsOrAbortSignal === 'object' &&
       ('abortSignal' in optionsOrAbortSignal ||
         'existingFileId' in optionsOrAbortSignal ||
-        'bandwidthLimitBytesPerSec' in optionsOrAbortSignal)
+        'bandwidthLimitBytesPerSec' in optionsOrAbortSignal ||
+        'skipLookup' in optionsOrAbortSignal)
     ) {
       abortSignal = optionsOrAbortSignal.abortSignal || null;
       existingFileId = optionsOrAbortSignal.existingFileId || null;
       bandwidthLimitBytesPerSec = Number(optionsOrAbortSignal.bandwidthLimitBytesPerSec) || 0;
+      skipLookup = Boolean(optionsOrAbortSignal.skipLookup);
     } else {
       abortSignal = optionsOrAbortSignal;
     }
 
-    // Check if file already exists
-    const existingFile = existingFileId ? { id: existingFileId } : await this.findFile(fileName, parentId);
+    // Check if file already exists only when the caller has not already resolved it.
+    let existingFile = null;
+    if (existingFileId) {
+      existingFile = { id: existingFileId };
+    } else if (!skipLookup) {
+      existingFile = await this.findFile(fileName, parentId);
+    }
 
     // Create stream and optionally wrap in a throttle transform.
-    const readStream = fs.createReadStream(filePath);
+    const readStream = this.trackActiveStream(fs.createReadStream(filePath));
     let uploadBody = readStream;
-    this.currentUploadStreams = [readStream];
+    let throttle = null;
 
     if (bandwidthLimitBytesPerSec > 0) {
-      const throttle = new RateLimitTransform(bandwidthLimitBytesPerSec);
+      throttle = this.trackActiveStream(new RateLimitTransform(bandwidthLimitBytesPerSec));
       readStream.pipe(throttle);
       uploadBody = throttle;
-      this.currentUploadStreams.push(throttle);
     }
 
     // Handle abort signal
+    const onAbort = () => {
+      this.cancelCurrentUpload();
+    };
     if (abortSignal) {
-      abortSignal.addEventListener('abort', () => {
-        this.cancelCurrentUpload();
-      }, { once: true });
+      abortSignal.addEventListener('abort', onAbort, { once: true });
     }
 
     const media = {
@@ -275,7 +296,11 @@ class DriveUploader {
         });
       }
     } finally {
-      this.currentUploadStreams = [];
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
+      this.untrackActiveStream(readStream);
+      this.untrackActiveStream(throttle);
     }
 
     return response.data;
@@ -283,7 +308,7 @@ class DriveUploader {
 
   // Cancel current upload if one is in progress
   cancelCurrentUpload() {
-    for (const stream of this.currentUploadStreams) {
+    for (const stream of Array.from(this.activeTransferStreams)) {
       if (stream && typeof stream.destroy === 'function') {
         try {
           stream.destroy();
@@ -292,7 +317,6 @@ class DriveUploader {
         }
       }
     }
-    this.currentUploadStreams = [];
   }
 
   async downloadFile(fileId, destinationPath, abortSignal = null) {
@@ -304,9 +328,8 @@ class DriveUploader {
       { responseType: 'stream' }
     );
 
-    const readStream = response.data;
-    const writeStream = fs.createWriteStream(destinationPath);
-    this.currentUploadStreams = [readStream, writeStream];
+    const readStream = this.trackActiveStream(response.data);
+    const writeStream = this.trackActiveStream(fs.createWriteStream(destinationPath));
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -314,7 +337,8 @@ class DriveUploader {
       const finalize = (err = null) => {
         if (settled) return;
         settled = true;
-        this.currentUploadStreams = [];
+        this.untrackActiveStream(readStream);
+        this.untrackActiveStream(writeStream);
         if (abortSignal && onAbort) {
           abortSignal.removeEventListener('abort', onAbort);
         }

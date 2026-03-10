@@ -452,6 +452,8 @@ if (!gotTheLock) {
   let activeSyncJob = null;
   let syncQueue = [];
   let isQueueProcessing = false;
+  let drivePollingTimer = null;
+  const DRIVE_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   function normalizeSyncJob(input) {
     const folderPath = input?.folderPath;
@@ -541,6 +543,36 @@ if (!gotTheLock) {
       .sort()
       .join('|');
     return `${normalizedFolder}|${job.mode}|${onlyFiles}`;
+  }
+
+  function startDrivePolling() {
+    stopDrivePolling();
+    drivePollingTimer = setInterval(pollDriveForChanges, DRIVE_POLL_INTERVAL_MS);
+    safeLog('Drive polling started (interval: 5 min)');
+  }
+
+  function stopDrivePolling() {
+    if (drivePollingTimer) {
+      clearInterval(drivePollingTimer);
+      drivePollingTimer = null;
+    }
+  }
+
+  function pollDriveForChanges() {
+    if (!googleAuth || !googleAuth.isAuthenticated()) return;
+    const mappings = store.get('folderMappings') || [];
+    const watchedMappings = mappings.filter(m => m.watching !== false && m.driveId);
+    if (watchedMappings.length === 0) return;
+
+    safeLog(`Drive poll: checking ${watchedMappings.length} watched folder(s) for remote changes`);
+
+    for (const mapping of watchedMappings) {
+      enqueueSyncJob({
+        folderPath: mapping.localPath,
+        mode: 'sync',
+        source: 'drive-poll'
+      }, { notify: false });
+    }
   }
 
   function enqueueSyncJob(jobInput, options = {}) {
@@ -1410,6 +1442,22 @@ if (!gotTheLock) {
         source: 'watcher'
       }, { notify: false });
 
+      // If deduplicated (same job already active/queued), schedule a retry so
+      // rapid or overlapping changes don't get silently dropped.
+      if (!queued) {
+        setTimeout(() => {
+          if (!fs.existsSync(filePath)) return;
+          if (!googleAuth.isAuthenticated()) return;
+          if (!store.get('autoUpload')) return;
+          enqueueSyncJob({
+            folderPath: localPath,
+            mode: 'sync',
+            onlyFiles: [filePath],
+            source: 'watcher-retry'
+          }, { notify: false });
+        }, 10000);
+      }
+
       if (queued && store.get('showNotifications')) {
         showNotification('File Queued', `${relativePath} queued for sync to ${driveName}`);
       }
@@ -1459,6 +1507,9 @@ if (!gotTheLock) {
     // Start queue processing if any jobs exist and auth is ready.
     processSyncQueue();
 
+    // Start polling Drive for remote changes every 5 minutes.
+    startDrivePolling();
+
     // Show window for direct user launches, but keep shell-triggered/background runs headless.
     const startedInBackground = process.argv.includes('--background-startup');
     const launchedFromShellCommand = hasShellCommandArg(process.argv);
@@ -1501,7 +1552,7 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     app.isQuitting = true;
-    // Clean up folder watchers
+    stopDrivePolling();
     if (folderWatcher) {
       folderWatcher.unwatchAll();
     }

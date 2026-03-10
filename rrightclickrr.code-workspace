@@ -6,14 +6,18 @@
                 ],
     "settings":  {
                      "workbench.colorCustomizations":  {
-                                                           "titleBar.activeBackground":  "#2C6E49",
-                                                           "titleBar.activeForeground":  "#FEFEE3",
-                                                           "activityBar.background":  "#2C6E49",
-                                                           "activityBar.foreground":  "#FEFEE3",
+                                                           "titleBar.activeBackground":  "#FEFEE3",
+                                                           "titleBar.activeForeground":  "#2C6E49",
+                                                           "activityBar.background":  "#FEFEE3",
+                                                           "activityBar.foreground":  "#2C6E49",
                                                            "statusBar.background":  "#4C956C",
                                                            "statusBar.foreground":  "#FEFEE3",
-                                                           "sideBar.background":  "#1a1a1a",
-                                                           "sideBarSectionHeader.background":  "#2C6E49"
+                                                           "sideBar.background":  "#f5f5e8",
+                                                           "sideBar.foreground":  "#1a1a1a",
+                                                           "sideBarSectionHeader.background":  "#FEFEE3",
+                                                           "sideBarSectionHeader.foreground":  "#2C6E49",
+                                                           "editor.background":  "#ffffff",
+                                                           "editor.foreground":  "#1a1a1a"
                                                        },
                      "claudeCode.allowDangerouslySkipPermissions":  true,
                      "claudeCode.useCtrlEnterToSend":  false,

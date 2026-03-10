@@ -10,7 +10,9 @@
     "start": "node scripts/launch.js .",
     "dev": "node scripts/launch.js . --dev",
     "dist:consolidate": "node scripts/consolidate-dist.js",
+    "prebuild": "node scripts/pre-build-clean.js",
     "build": "electron-builder",
+    "postbuild": "node scripts/post-build-copy.js",
     "build:win": "electron-builder --win",
     "pack": "electron-builder --dir",
     "postinstall": "electron-builder install-app-deps",
@@ -50,7 +52,7 @@
     "productName": "RRightclickrr",
     "copyright": "Copyright © 2026 Kepners",
     "directories": {
-      "output": "dist",
+      "output": "C:/Users/kepne/AppData/Local/rrc-build",
       "buildResources": "assets"
     },
     "files": [

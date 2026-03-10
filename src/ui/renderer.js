@@ -503,5 +503,16 @@ document.getElementById('minimizeBtn').addEventListener('click', () => window.ap
 document.getElementById('maximizeBtn').style.display = 'none';
 document.getElementById('closeBtn').addEventListener('click', () => window.api.closeWindow());
 
+// Set dynamic version in footer
+(async () => {
+  try {
+    const version = await window.api.getVersion();
+    const el = document.getElementById('app-version');
+    if (el && version) {
+      el.textContent = `RRightclickrr v${version} | Right-click sync to Google Drive`;
+    }
+  } catch (_) { /* keep hardcoded fallback */ }
+})();
+
 // Initialize app
 init();

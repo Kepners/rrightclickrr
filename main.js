@@ -453,7 +453,7 @@ if (!gotTheLock) {
   let syncQueue = [];
   let isQueueProcessing = false;
   let drivePollingTimer = null;
-  const DRIVE_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  const DRIVE_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — faster remote detection
 
   function normalizeSyncJob(input) {
     const folderPath = input?.folderPath;
@@ -482,6 +482,59 @@ if (!gotTheLock) {
   function loadPersistedSyncQueue() {
     const persisted = store.get('syncQueue') || [];
     syncQueue = persisted.map(normalizeSyncJob).filter(Boolean);
+
+    // If the queue has grown absurdly (e.g. thousands of stale watcher events),
+    // compact it down to one full sync per folder instead of processing each stale file.
+    if (syncQueue.length > 50) {
+      safeLog(`Queue bloat detected: ${syncQueue.length} jobs — compacting to per-folder full syncs`);
+      syncQueue = compactQueueToFullSyncs(syncQueue);
+      persistSyncQueue();
+    }
+  }
+
+  /**
+   * Replace a bloated queue with one full sync per folder.
+   * Keeps 'copy' jobs as-is but collapses all 'sync' jobs for the same folder.
+   */
+  function compactQueueToFullSyncs(queue) {
+    const foldersSeen = new Set();
+    const compacted = [];
+
+    for (const job of queue) {
+      // Preserve copy jobs untouched
+      if (job.mode === 'copy') {
+        compacted.push(job);
+        continue;
+      }
+
+      const key = normalizeLocalPath(job.folderPath);
+      if (foldersSeen.has(key)) continue;
+      foldersSeen.add(key);
+
+      compacted.push(normalizeSyncJob({
+        folderPath: job.folderPath,
+        mode: 'sync',
+        source: 'compacted'
+      }));
+    }
+
+    safeLog(`Compacted queue: ${queue.length} → ${compacted.length} jobs`);
+    return compacted;
+  }
+
+  /**
+   * Check if a full sync for the given folder is already queued or active.
+   */
+  function hasFullSyncQueued(folderPath) {
+    const normalizedFolder = normalizeLocalPath(folderPath);
+    const isFullSync = (job) =>
+      normalizeLocalPath(job.folderPath) === normalizedFolder &&
+      job.mode === 'sync' &&
+      (!job.onlyFiles || job.onlyFiles.length === 0);
+
+    if (syncQueue.some(isFullSync)) return true;
+    if (activeSyncJob && isFullSync(activeSyncJob)) return true;
+    return false;
   }
 
   function setActiveSyncSession(job, status = 'running') {
@@ -548,7 +601,7 @@ if (!gotTheLock) {
   function startDrivePolling() {
     stopDrivePolling();
     drivePollingTimer = setInterval(pollDriveForChanges, DRIVE_POLL_INTERVAL_MS);
-    safeLog('Drive polling started (interval: 5 min)');
+    safeLog('Drive polling started (interval: 2 min)');
   }
 
   function stopDrivePolling() {
@@ -579,6 +632,18 @@ if (!gotTheLock) {
     const job = normalizeSyncJob(jobInput);
     if (!job) return null;
 
+    const isFullSync = !job.onlyFiles || job.onlyFiles.length === 0;
+    const normalizedFolder = normalizeLocalPath(job.folderPath);
+
+    // --- Smart dedup / compaction ---
+
+    // If this is an individual-file sync but a full sync for the same folder is
+    // already queued or running, skip — the full sync covers it.
+    if (!isFullSync && hasFullSyncQueued(job.folderPath)) {
+      return null;
+    }
+
+    // Standard exact-key dedup
     const key = getSyncJobKey(job);
     const duplicateInQueue = syncQueue.some(existing => getSyncJobKey(existing) === key);
     const duplicateActive = activeSyncJob && getSyncJobKey(activeSyncJob) === key;
@@ -586,7 +651,23 @@ if (!gotTheLock) {
       return null;
     }
 
-    if (options.front) {
+    // If this IS a full sync, remove all individual-file syncs for the same folder
+    // from the queue — they're now redundant.
+    if (isFullSync) {
+      const before = syncQueue.length;
+      syncQueue = syncQueue.filter(existing => {
+        if (normalizeLocalPath(existing.folderPath) !== normalizedFolder) return true;
+        if (existing.mode !== 'sync') return true;
+        if (!existing.onlyFiles || existing.onlyFiles.length === 0) return true; // keep other full syncs
+        return false; // remove individual-file syncs for this folder
+      });
+      if (syncQueue.length < before) {
+        safeLog(`Full sync for ${path.basename(job.folderPath)} absorbed ${before - syncQueue.length} queued file syncs`);
+      }
+    }
+
+    if (options.front || isFullSync) {
+      // Full syncs go to the front — they're more important than individual file syncs
       syncQueue.unshift(job);
     } else {
       syncQueue.push(job);
@@ -605,7 +686,7 @@ if (!gotTheLock) {
   }
 
   function recoverInterruptedSyncSession() {
-    loadPersistedSyncQueue();
+    loadPersistedSyncQueue(); // includes bloat compaction
 
     const active = store.get('activeSyncSession');
     const autoResume = Boolean(store.get('autoResumeInterruptedSync'));
@@ -617,6 +698,20 @@ if (!gotTheLock) {
       });
       if (recoveredJob) {
         syncQueue.unshift(recoveredJob);
+      }
+    }
+
+    // On every startup, ensure a full sync is queued for each watched folder so
+    // any changes that happened while the app was offline get picked up immediately.
+    const mappings = store.get('folderMappings') || [];
+    for (const mapping of mappings) {
+      if (mapping.watching === false || !mapping.driveId) continue;
+      if (!hasFullSyncQueued(mapping.localPath)) {
+        syncQueue.push(normalizeSyncJob({
+          folderPath: mapping.localPath,
+          mode: 'sync',
+          source: 'startup-catchup'
+        }));
       }
     }
 
@@ -1118,6 +1213,10 @@ if (!gotTheLock) {
   });
 
   // IPC Handlers
+  ipcMain.handle('get-app-version', () => {
+    return app.getVersion();
+  });
+
   ipcMain.handle('get-settings', async () => {
     const accountInfo = googleAuth?.isAuthenticated()
       ? await googleAuth.getAccountInfo()

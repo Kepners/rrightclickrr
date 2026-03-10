@@ -453,6 +453,7 @@ if (!gotTheLock) {
   let syncQueue = [];
   let isQueueProcessing = false;
   let drivePollingTimer = null;
+  let hasLoggedDrivePollingDisabled = false;
   const DRIVE_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — faster remote detection
 
   function normalizeSyncJob(input) {
@@ -481,7 +482,13 @@ if (!gotTheLock) {
 
   function loadPersistedSyncQueue() {
     const persisted = store.get('syncQueue') || [];
-    syncQueue = persisted.map(normalizeSyncJob).filter(Boolean);
+    const normalizedQueue = persisted.map(normalizeSyncJob).filter(Boolean);
+    const staleDrivePollJobs = normalizedQueue.filter(job => job.source === 'drive-poll').length;
+    syncQueue = normalizedQueue.filter(job => job.source !== 'drive-poll');
+    if (staleDrivePollJobs > 0) {
+      safeLog(`Discarded ${staleDrivePollJobs} stale drive-poll job(s) from the queue`);
+      persistSyncQueue();
+    }
 
     // If the queue has grown absurdly (e.g. thousands of stale watcher events),
     // compact it down to one full sync per folder instead of processing each stale file.
@@ -600,8 +607,10 @@ if (!gotTheLock) {
 
   function startDrivePolling() {
     stopDrivePolling();
-    drivePollingTimer = setInterval(pollDriveForChanges, DRIVE_POLL_INTERVAL_MS);
-    safeLog('Drive polling started (interval: 2 min)');
+    if (!hasLoggedDrivePollingDisabled) {
+      safeLog('Drive polling disabled: remote delta detection is not implemented yet');
+      hasLoggedDrivePollingDisabled = true;
+    }
   }
 
   function stopDrivePolling() {
@@ -612,20 +621,7 @@ if (!gotTheLock) {
   }
 
   function pollDriveForChanges() {
-    if (!googleAuth || !googleAuth.isAuthenticated()) return;
-    const mappings = store.get('folderMappings') || [];
-    const watchedMappings = mappings.filter(m => m.watching !== false && m.driveId);
-    if (watchedMappings.length === 0) return;
-
-    safeLog(`Drive poll: checking ${watchedMappings.length} watched folder(s) for remote changes`);
-
-    for (const mapping of watchedMappings) {
-      enqueueSyncJob({
-        folderPath: mapping.localPath,
-        mode: 'sync',
-        source: 'drive-poll'
-      }, { notify: false });
-    }
+    return;
   }
 
   function enqueueSyncJob(jobInput, options = {}) {
@@ -691,7 +687,7 @@ if (!gotTheLock) {
     const active = store.get('activeSyncSession');
     const autoResume = Boolean(store.get('autoResumeInterruptedSync'));
 
-    if (active && autoResume) {
+    if (active && autoResume && active.source !== 'drive-poll') {
       const recoveredJob = normalizeSyncJob({
         ...active,
         source: 'recovered'
@@ -699,6 +695,8 @@ if (!gotTheLock) {
       if (recoveredJob) {
         syncQueue.unshift(recoveredJob);
       }
+    } else if (active?.source === 'drive-poll') {
+      safeLog('Discarded stale active drive-poll sync session during startup recovery');
     }
 
     // On every startup, ensure a full sync is queued for each watched folder so

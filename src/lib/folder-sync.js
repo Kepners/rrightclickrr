@@ -489,7 +489,10 @@ class FolderSync {
     }
 
     // For full sync runs, also pull Drive-only files to local (missing files only).
-    const shouldPullFromDrive = runOptions.syncMode === 'sync' && runOptions.onlyFiles.size === 0;
+    const shouldPullFromDrive =
+      runOptions.pullFromDrive === true &&
+      runOptions.syncMode === 'sync' &&
+      runOptions.onlyFiles.size === 0;
     if (shouldPullFromDrive && !this.cancelled && !this.abortController.signal.aborted) {
       const pullResult = await this.downloadMissingFromDrive(
         localFolderPath,
@@ -514,6 +517,8 @@ class FolderSync {
       failedCount += pullResult.failedCount;
       downloadedFiles.push(...pullResult.downloadedFiles);
       failedFiles.push(...pullResult.failedFiles);
+    } else if (runOptions.syncMode === 'sync') {
+      this.log('Drive pull skipped for this sync run');
     }
 
     // Get share link for the root folder
@@ -586,10 +591,12 @@ class FolderSync {
       : 0;
 
     const syncMode = options.syncMode === 'copy' ? 'copy' : 'sync';
+    const pullFromDrive = Boolean(options.pullFromDrive);
 
     return {
       onlyFiles,
       syncMode,
+      pullFromDrive,
       retryMaxAttempts,
       retryBaseDelayMs,
       retryMaxDelayMs,
@@ -723,6 +730,7 @@ class FolderSync {
 
     let remoteFiles = [];
     try {
+      this.log(`Drive pull: listing remote tree for ${localFolderPath}`);
       remoteFiles = await this.driveUploader.listFilesRecursive(rootFolderId);
     } catch (error) {
       this.log(`ERROR listing Drive files for download pull: ${error.message}`);

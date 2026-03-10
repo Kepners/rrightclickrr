@@ -71,7 +71,7 @@ class DriveUploader {
     const escapedName = this.escapeQueryString(name);
     const response = await drive.files.list({
       q: `mimeType='application/vnd.google-apps.folder' and name='${escapedName}' and '${parentId}' in parents and trashed=false`,
-      fields: 'files(id, name, parents, createdTime)',
+      fields: 'files(id, name, parents, createdTime, webViewLink)',
       orderBy: 'createdTime', // Pick oldest if duplicates exist
       pageSize: 10 // Get a few in case of duplicates
     });
@@ -115,6 +115,28 @@ class DriveUploader {
     }
 
     return currentParentId;
+  }
+
+  /**
+   * Like ensureFolderPath but also returns the Drive ID + webViewLink for each
+   * path segment so callers can track folder→Drive mappings.
+   * @returns {{ folderId: string, folderIds: Array<{id: string, webViewLink: string}> }}
+   */
+  async ensureFolderPathWithIds(folderPath, baseParentId = 'root') {
+    const parts = folderPath.split(/[/\\]/).filter(p => p && p !== '');
+    let currentParentId = baseParentId;
+    const folderIds = [];
+
+    for (const part of parts) {
+      const folder = await this.findOrCreateFolder(part, currentParentId);
+      folderIds.push({
+        id: folder.id,
+        webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}`
+      });
+      currentParentId = folder.id;
+    }
+
+    return { folderId: currentParentId, folderIds };
   }
 
   async listChildren(parentId) {

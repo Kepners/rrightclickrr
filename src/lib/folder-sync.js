@@ -190,6 +190,10 @@ class FolderSync {
       rootFolderId = rootFolder.id;
     }
 
+    // Per-run cache: relativeDir → { folderId, folderIds } to avoid redundant Drive API calls
+    // when many files share the same parent directory.
+    const ensuredDirCache = new Map();
+
     // Upload changed/new files only, while still reporting progress across all files.
     for (const file of files) {
       if (this.cancelled || this.abortController.signal.aborted) {
@@ -263,10 +267,17 @@ class FolderSync {
         await this.waitIfPaused();
 
         try {
-          // Ensure folder structure exists in Drive
+          // Ensure folder structure exists in Drive (cached per sync run)
           let parentId = rootFolderId;
           if (relativeDir && relativeDir !== '.') {
-            parentId = await this.driveUploader.ensureFolderPath(relativeDir, rootFolderId);
+            if (ensuredDirCache.has(relativeDir)) {
+              parentId = ensuredDirCache.get(relativeDir).folderId;
+            } else {
+              const dirResult = await this.driveUploader.ensureFolderPathWithIds(relativeDir, rootFolderId);
+              ensuredDirCache.set(relativeDir, dirResult);
+              this.recordFolderSyncs(localFolderPath, relativeDir, dirResult.folderIds);
+              parentId = dirResult.folderId;
+            }
           }
 
           let conflictResolved = false;
@@ -383,6 +394,12 @@ class FolderSync {
         failedCount,
         paused: this.paused
       });
+    }
+
+    // For full sync runs, create any local subdirectories that had no files in them
+    // (those would never be created via ensureFolderPath during file uploads).
+    if (runOptions.syncMode === 'sync' && runOptions.onlyFiles.size === 0 && !this.cancelled) {
+      await this.createEmptyDirsInDrive(localFolderPath, rootFolderId, ensuredDirCache);
     }
 
     // For full sync runs, also pull Drive-only files to local (missing files only).
@@ -1054,6 +1071,96 @@ class FolderSync {
       '.DS_Store'
     ];
     return systemFiles.includes(name);
+  }
+
+  /**
+   * Record Drive folder IDs for each segment of a synced relative directory path.
+   * This allows dir-deleted handlers to look up the Drive folder ID later.
+   */
+  recordFolderSyncs(localFolderPath, relativeDir, folderIds) {
+    if (!this.syncTracker || !folderIds || folderIds.length === 0) return;
+    const parts = relativeDir.split(/[/\\]/).filter(p => p);
+    parts.forEach((part, i) => {
+      if (!folderIds[i]) return;
+      const localDirPath = path.join(localFolderPath, ...parts.slice(0, i + 1));
+      this.syncTracker.trackSync(
+        localDirPath,
+        folderIds[i].id,
+        folderIds[i].webViewLink,
+        'folder'
+      );
+    });
+  }
+
+  /**
+   * Collect all subdirectories recursively, respecting the same exclusion and
+   * hidden-folder rules as getAllFiles.
+   */
+  getAllDirectories(dirPath, arrayOfDirs = [], basePath = null) {
+    if (basePath === null) basePath = dirPath;
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirPath);
+    } catch {
+      return arrayOfDirs;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry);
+      let stat = null;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!stat.isDirectory()) continue;
+      if (entry.startsWith('.') || this.isSystemFolder(entry)) continue;
+      const relativePath = path.relative(basePath, fullPath).toLowerCase();
+      if (this.isPathExcluded(relativePath)) continue;
+      arrayOfDirs.push(fullPath);
+      this.getAllDirectories(fullPath, arrayOfDirs, basePath);
+    }
+
+    return arrayOfDirs;
+  }
+
+  /**
+   * Create any local subdirectories that have no files anywhere in their subtree.
+   * These are invisible to the file-upload loop but must still exist in Drive.
+   * Skips dirs already processed by the file upload loop (via ensuredDirCache).
+   */
+  async createEmptyDirsInDrive(localFolderPath, rootFolderId, ensuredDirCache) {
+    const allDirs = this.getAllDirectories(localFolderPath);
+
+    for (const dir of allDirs) {
+      if (this.cancelled) break;
+
+      const relativeDir = path.relative(localFolderPath, dir);
+      if (!relativeDir || relativeDir === '.') continue;
+
+      // Already handled by a file upload
+      if (ensuredDirCache.has(relativeDir)) continue;
+
+      // Check if ANY file exists anywhere in this subtree
+      const hasFiles = this.getAllFiles(dir).length > 0;
+      if (hasFiles) {
+        // Non-empty: its files will trigger ensureFolderPath via the upload loop.
+        // We still want to record the Drive folder ID for this dir so we can trash
+        // it later if it's deleted locally. But only do this if not already cached.
+        continue;
+      }
+
+      // Truly empty subtree — explicitly create in Drive
+      try {
+        const dirResult = await this.driveUploader.ensureFolderPathWithIds(relativeDir, rootFolderId);
+        ensuredDirCache.set(relativeDir, dirResult);
+        this.recordFolderSyncs(localFolderPath, relativeDir, dirResult.folderIds);
+        this.log(`Created empty dir in Drive: ${relativeDir} -> ${dirResult.folderId}`);
+      } catch (e) {
+        this.log(`ERROR creating empty dir ${relativeDir}: ${e.message}`);
+      }
+    }
   }
 
   formatBytes(bytes) {

@@ -1486,6 +1486,55 @@ if (!gotTheLock) {
       }
     });
 
+    // A new subdirectory was created locally — queue a full sync so Drive gets the folder
+    // (and any files already inside it that the per-file watcher events may have missed).
+    folderWatcher.on('dir-added', async (data) => {
+      if (!googleAuth.isAuthenticated()) {
+        safeLog('Skipping dir-added auto-sync - not authenticated');
+        return;
+      }
+      if (!store.get('autoUpload')) {
+        safeLog('Skipping dir-added auto-sync - autoUpload disabled');
+        return;
+      }
+
+      const { localPath, relativePath, driveName } = data;
+      safeLog(`Dir added: ${relativePath} — queuing full sync of ${localPath}`);
+
+      enqueueSyncJob({
+        folderPath: localPath,
+        mode: 'sync',
+        source: 'watcher-dir-add'
+      }, { notify: false });
+    });
+
+    // A subdirectory was deleted locally — trash its Drive counterpart
+    folderWatcher.on('dir-deleted', async (data) => {
+      const { dirPath, relativePath, driveName } = data;
+      safeLog(`Dir deleted: ${relativePath}`);
+
+      const tracked = syncTracker ? syncTracker.getSyncInfo(dirPath) : null;
+
+      if (tracked?.driveId && tracked.type === 'folder' && googleAuth.isAuthenticated()) {
+        try {
+          await driveUploader.trashFile(tracked.driveId);
+          safeLog(`Trashed Drive folder: ${relativePath} (${tracked.driveId})`);
+          if (store.get('showNotifications')) {
+            showNotification('Folder Removed', `${relativePath} removed from ${driveName}`);
+          }
+        } catch (error) {
+          safeLog('Failed to trash deleted folder in Drive:', error.message);
+        }
+      } else {
+        safeLog(`Dir deleted but no Drive ID tracked for: ${relativePath} — skipping Drive trash`);
+      }
+
+      // Always untrack the deleted dir and all children from the sync tracker
+      if (syncTracker) {
+        syncTracker.untrackUnderPath(dirPath);
+      }
+    });
+
     folderWatcher.on('watching', (data) => {
       safeLog('Now watching:', data.localPath);
       updateTrayTooltip();

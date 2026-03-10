@@ -46,6 +46,12 @@ class FolderWatcher extends EventEmitter {
     watcher.on('add', (filePath) => this.handleChange('add', filePath, localPath, driveId, driveName));
     watcher.on('change', (filePath) => this.handleChange('change', filePath, localPath, driveId, driveName));
     watcher.on('unlink', (filePath) => this.handleDelete(filePath, localPath, driveId, driveName));
+    watcher.on('addDir', (dirPath) => {
+      // chokidar fires addDir for the root itself on startup — ignore that
+      if (path.normalize(dirPath) === path.normalize(localPath)) return;
+      this.handleDirAdded(dirPath, localPath, driveId, driveName);
+    });
+    watcher.on('unlinkDir', (dirPath) => this.handleDirDeleted(dirPath, localPath, driveId, driveName));
     watcher.on('error', (error) => this.emit('error', { localPath, error }));
 
     this.watchers.set(localPath, { watcher, driveId, driveName });
@@ -96,6 +102,55 @@ class FolderWatcher extends EventEmitter {
       driveId,
       driveName,
       relativePath: path.relative(localPath, filePath)
+    });
+  }
+
+  /**
+   * Handle a new directory being created — debounced so we don't fire mid-copy
+   */
+  handleDirAdded(dirPath, localPath, driveId, driveName) {
+    if (this.isExcluded(dirPath, localPath)) {
+      return;
+    }
+
+    if (this.pendingChanges.has(dirPath)) {
+      clearTimeout(this.pendingChanges.get(dirPath));
+    }
+
+    const timeout = setTimeout(() => {
+      this.pendingChanges.delete(dirPath);
+      this.emit('dir-added', {
+        dirPath,
+        localPath,
+        driveId,
+        driveName,
+        relativePath: path.relative(localPath, dirPath)
+      });
+    }, this.debounceMs);
+
+    this.pendingChanges.set(dirPath, timeout);
+  }
+
+  /**
+   * Handle a directory being deleted
+   */
+  handleDirDeleted(dirPath, localPath, driveId, driveName) {
+    if (this.isExcluded(dirPath, localPath)) {
+      return;
+    }
+
+    // Cancel any pending debounce for this path (e.g. add → delete in rapid succession)
+    if (this.pendingChanges.has(dirPath)) {
+      clearTimeout(this.pendingChanges.get(dirPath));
+      this.pendingChanges.delete(dirPath);
+    }
+
+    this.emit('dir-deleted', {
+      dirPath,
+      localPath,
+      driveId,
+      driveName,
+      relativePath: path.relative(localPath, dirPath)
     });
   }
 

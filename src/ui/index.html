@@ -163,8 +163,23 @@
     </main>
 
     <footer class="footer">
-      <p id="app-version">RRightclickrr v1.2.16 | Right-click sync to Google Drive</p>
+      <p id="app-version">RRightclickrr v1.2.18 | Right-click sync to Google Drive</p>
     </footer>
+  </div>
+
+  <!-- Sync Status Modal -->
+  <div class="modal hidden" id="syncStatusModal">
+    <div class="modal-content modal-lg">
+      <h3>Sync Status Check</h3>
+      <p class="modal-subtitle">Folder: <span id="syncStatusFolder"></span></p>
+      <div id="syncStatusBody">
+        <div class="loading">Comparing local and Drive files...</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="syncStatusRefreshBtn">Refresh</button>
+        <button class="btn btn-primary" id="syncStatusCloseBtn">Close</button>
+      </div>
+    </div>
   </div>
 
   <!-- Add Mapping Modal -->

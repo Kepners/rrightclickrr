@@ -139,6 +139,12 @@ function renderMappings() {
         <div class="mapping-drive">${mapping.driveName || 'My Drive'}</div>
       </div>
       <div class="mapping-actions">
+        <button class="btn-icon check-sync" title="Check sync status" data-action="check-sync">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M13.5 8l-2-2M13.5 8l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <button class="btn-icon" title="Manage exclusions" data-action="exclude">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" transform="rotate(45 8 8)"/>
@@ -171,6 +177,8 @@ function renderMappings() {
         deleteFromDrive(index);
       } else if (action === 'exclude') {
         openExclusionModal(index);
+      } else if (action === 'check-sync') {
+        openSyncStatusModal(index);
       }
     });
   });
@@ -495,6 +503,97 @@ document.getElementById('closeExclusionBtn').addEventListener('click', closeExcl
 document.getElementById('exclusionModal').addEventListener('click', (e) => {
   if (e.target.id === 'exclusionModal') {
     closeExclusionModal();
+  }
+});
+
+// ── Sync Status Modal ─────────────────────────────────────────────────────────
+
+let currentSyncStatusIndex = null;
+
+async function openSyncStatusModal(index) {
+  currentSyncStatusIndex = index;
+  const mapping = settings.folderMappings[index];
+  if (!mapping) return;
+
+  document.getElementById('syncStatusFolder').textContent = mapping.localPath;
+  document.getElementById('syncStatusBody').innerHTML = '<div class="loading">Comparing local and Drive files…</div>';
+  document.getElementById('syncStatusModal').classList.remove('hidden');
+
+  await runSyncCheck(mapping);
+}
+
+async function runSyncCheck(mapping) {
+  const body = document.getElementById('syncStatusBody');
+  body.innerHTML = '<div class="loading">Comparing local and Drive files…</div>';
+
+  const result = await window.api.checkSyncStatus(
+    mapping.localPath,
+    mapping.driveId,
+    mapping.excludePaths || []
+  );
+
+  if (!result.success) {
+    body.innerHTML = `<div class="sync-verdict warn"><span class="sync-verdict-icon">⚠️</span> Error: ${result.error}</div>`;
+    return;
+  }
+
+  const allInSync = result.onlyLocalCount === 0 && result.onlyDriveCount === 0;
+
+  let html = `
+    <div class="sync-status-summary">
+      <div class="sync-stat"><div class="stat-val">${result.localCount}</div><div class="stat-lbl">Local files</div></div>
+      <div class="sync-stat"><div class="stat-val">${result.driveCount}</div><div class="stat-lbl">Drive files</div></div>
+      <div class="sync-stat ${allInSync ? 'ok' : 'warn'}"><div class="stat-val">${result.syncedCount}</div><div class="stat-lbl">In sync</div></div>
+    </div>
+    <div class="sync-verdict ${allInSync ? 'ok' : 'warn'}">
+      <span class="sync-verdict-icon">${allInSync ? '✅' : '⚠️'}</span>
+      ${allInSync
+        ? `All ${result.syncedCount} files match between local and Drive.`
+        : `${result.onlyLocalCount} not yet on Drive · ${result.onlyDriveCount} not yet downloaded locally`}
+    </div>
+  `;
+
+  if (result.onlyLocalCount > 0) {
+    html += `
+      <div class="sync-diff-section">
+        <div class="sync-diff-label">⬆ On local only — not yet uploaded (${result.onlyLocalCount}${result.onlyLocalCount > result.onlyLocal.length ? `, showing first ${result.onlyLocal.length}` : ''})</div>
+        <div class="sync-diff-list">
+          ${result.onlyLocal.map(f => `<div class="sync-diff-file local-only">${f}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  if (result.onlyDriveCount > 0) {
+    html += `
+      <div class="sync-diff-section">
+        <div class="sync-diff-label">⬇ On Drive only — not yet downloaded (${result.onlyDriveCount}${result.onlyDriveCount > result.onlyDrive.length ? `, showing first ${result.onlyDrive.length}` : ''})</div>
+        <div class="sync-diff-list">
+          ${result.onlyDrive.map(f => `<div class="sync-diff-file drive-only">${f}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  html += `<div class="sync-checked-at">Checked at ${result.checkedAt}</div>`;
+  body.innerHTML = html;
+}
+
+document.getElementById('syncStatusCloseBtn').addEventListener('click', () => {
+  document.getElementById('syncStatusModal').classList.add('hidden');
+  currentSyncStatusIndex = null;
+});
+
+document.getElementById('syncStatusRefreshBtn').addEventListener('click', async () => {
+  if (currentSyncStatusIndex === null) return;
+  const mapping = settings.folderMappings[currentSyncStatusIndex];
+  if (mapping) await runSyncCheck(mapping);
+});
+
+document.getElementById('syncStatusModal').addEventListener('click', (e) => {
+  if (e.target.id === 'syncStatusModal') {
+    document.getElementById('syncStatusModal').classList.add('hidden');
+    currentSyncStatusIndex = null;
   }
 });
 

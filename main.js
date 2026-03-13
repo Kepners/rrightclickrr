@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const pathModule = require('path');
 
-const BUILD_STAMP = '2026-03-13-two-way-sync-v1.2.17';
+const BUILD_STAMP = '2026-03-13-sync-status-ui-v1.2.18';
 const BOOT_LOG = pathModule.join(os.homedir(), 'rrightclickrr-boot.log');
 
 // File-based logger that NEVER touches stdout/stderr
@@ -1502,6 +1502,83 @@ if (!gotTheLock) {
       store.set('conflictPolicy', String(settings.conflictPolicy || 'keep-both-local-wins'));
     }
     return true;
+  });
+
+  // === SYNC STATUS CHECK ===
+  // Compares local files against Google Drive for a single mapping.
+  ipcMain.handle('check-sync-status', async (event, { localPath, driveId, excludePaths }) => {
+    if (!googleAuth.isAuthenticated()) {
+      return { success: false, error: 'Not authenticated' };
+    }
+    if (!fs.existsSync(localPath)) {
+      return { success: false, error: 'Local folder not found' };
+    }
+
+    try {
+      const excluded = (excludePaths || []).map(p => p.toLowerCase());
+
+      // Walk local filesystem
+      const localFiles = new Map(); // normalised key → display relPath
+      const walkLocal = (dir, relBase) => {
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const entry of entries) {
+          if (entry.name.startsWith('.')) continue;
+          const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+          // Skip excluded subfolders
+          if (excluded.some(ex => rel.toLowerCase() === ex || rel.toLowerCase().startsWith(ex + '/'))) continue;
+          if (entry.isFile()) {
+            localFiles.set(rel.toLowerCase(), rel);
+          } else if (entry.isDirectory()) {
+            walkLocal(path.join(dir, entry.name), rel);
+          }
+        }
+      };
+      walkLocal(localPath, '');
+
+      // Walk Drive (returns array with relativePath using forward slashes)
+      const driveItems = await driveUploader.listFilesRecursive(driveId);
+      const driveFiles = new Map();
+      for (const item of driveItems) {
+        if (item.relativePath) {
+          driveFiles.set(item.relativePath.toLowerCase(), item.relativePath);
+        }
+      }
+
+      // Compare
+      const onlyLocal = [];
+      const onlyDrive = [];
+      const inSync = [];
+
+      for (const [key, rel] of localFiles) {
+        if (driveFiles.has(key)) {
+          inSync.push(rel);
+        } else {
+          onlyLocal.push(rel);
+        }
+      }
+      for (const [key, rel] of driveFiles) {
+        if (!localFiles.has(key)) {
+          onlyDrive.push(rel);
+        }
+      }
+
+      const MAX_SHOW = 30;
+      return {
+        success: true,
+        localCount: localFiles.size,
+        driveCount: driveFiles.size,
+        syncedCount: inSync.length,
+        onlyLocalCount: onlyLocal.length,
+        onlyDriveCount: onlyDrive.length,
+        onlyLocal: onlyLocal.slice(0, MAX_SHOW),
+        onlyDrive: onlyDrive.slice(0, MAX_SHOW),
+        checkedAt: new Date().toLocaleTimeString()
+      };
+    } catch (err) {
+      safeLog('check-sync-status error:', err.message);
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMain.handle('stop-watching', async (event, { localPath }) => {

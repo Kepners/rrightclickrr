@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('api', {
   removeExclusion: (localPath, excludePath) => ipcRenderer.invoke('remove-exclusion', { localPath, excludePath }),
   getSubfolders: (folderPath) => ipcRenderer.invoke('get-subfolders', folderPath),
 
+  // Sync status check
+  checkSyncStatus: (localPath, driveId, excludePaths) => ipcRenderer.invoke('check-sync-status', { localPath, driveId, excludePaths }),
+
   // Delete from Drive
   deleteFromDrive: (localPath, driveId) => ipcRenderer.invoke('delete-from-drive', { localPath, driveId }),
   stopWatching: (localPath) => ipcRenderer.invoke('stop-watching', { localPath }),

@@ -278,8 +278,7 @@ body {
   padding: 0.875rem 1rem;
   margin-bottom: 0.5rem;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
   transition: all 0.2s ease;
 }
 
@@ -744,3 +743,34 @@ body {
   border-color: var(--secondary);
   color: var(--secondary);
 }
+
+/* Inline sync status on mapping cards */
+.mapping-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.mapping-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mapping-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.status-checking { color: var(--text-muted); font-style: italic; }
+.status-na       { color: var(--text-muted); }
+.status-ok       { color: var(--success); font-weight: 600; }
+.status-warn     { color: var(--warm);    font-weight: 600; }
+.status-err      { color: var(--danger);  font-weight: 600; }
+.status-meta     { color: var(--text-muted); font-size: 0.7rem; }

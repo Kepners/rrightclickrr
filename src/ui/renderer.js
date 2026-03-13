@@ -131,35 +131,43 @@ function renderMappings() {
   mappingsList.innerHTML = settings.folderMappings.map((mapping, index) => {
     const excludeCount = (mapping.excludePaths || []).length;
     const excludeText = excludeCount > 0 ? `<span class="exclude-badge">${excludeCount} excluded</span>` : '';
+    const hasMapping = mapping.driveId && settings.isAuthenticated;
 
     return `
     <div class="mapping-item" data-index="${index}">
-      <div class="mapping-info">
-        <div class="mapping-local">${mapping.localPath} ${excludeText}</div>
-        <div class="mapping-drive">${mapping.driveName || 'My Drive'}</div>
-      </div>
-      <div class="mapping-actions">
-        <button class="btn-icon check-sync" title="Check sync status" data-action="check-sync">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            <path d="M13.5 8l-2-2M13.5 8l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button class="btn-icon" title="Manage exclusions" data-action="exclude">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" transform="rotate(45 8 8)"/>
-          </svg>
-        </button>
-        <button class="btn-icon delete-drive" title="Delete from Google Drive" data-action="delete-drive">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button class="btn-icon delete" title="Stop watching (keep on Drive)" data-action="delete">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M4 4l8 8M4 12l8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
+      <div class="mapping-body">
+        <div class="mapping-top">
+          <div class="mapping-info">
+            <div class="mapping-local">${mapping.localPath} ${excludeText}</div>
+            <div class="mapping-drive">${mapping.driveName || 'My Drive'}</div>
+          </div>
+          <div class="mapping-actions">
+            <button class="btn-icon check-sync" title="Refresh sync status" data-action="check-sync">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M13.5 8l-2-2M13.5 8l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="btn-icon" title="Manage exclusions" data-action="exclude">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" transform="rotate(45 8 8)"/>
+              </svg>
+            </button>
+            <button class="btn-icon delete-drive" title="Delete from Google Drive" data-action="delete-drive">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 4h12M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v5M10 7v5M3 4l1 9a1 1 0 001 1h6a1 1 0 001-1l1-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="btn-icon delete" title="Stop watching (keep on Drive)" data-action="delete">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M4 4l8 8M4 12l8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="mapping-status" id="mapping-status-${index}">
+          ${hasMapping ? '<span class="status-checking">Checking…</span>' : '<span class="status-na">Not yet synced</span>'}
+        </div>
       </div>
     </div>
   `}).join('');
@@ -178,10 +186,56 @@ function renderMappings() {
       } else if (action === 'exclude') {
         openExclusionModal(index);
       } else if (action === 'check-sync') {
-        openSyncStatusModal(index);
+        refreshInlineSyncStatus(index);
       }
     });
   });
+
+  // Auto-load inline status for all mappings that have a driveId
+  if (settings.isAuthenticated) {
+    settings.folderMappings.forEach((mapping, index) => {
+      if (mapping.driveId) {
+        loadInlineSyncStatus(index, mapping);
+      }
+    });
+  }
+}
+
+async function loadInlineSyncStatus(index, mapping) {
+  const el = document.getElementById(`mapping-status-${index}`);
+  if (!el) return;
+
+  const result = await window.api.checkSyncStatus(
+    mapping.localPath,
+    mapping.driveId,
+    mapping.excludePaths || []
+  );
+
+  if (!el) return; // may have been removed while waiting
+
+  if (!result.success) {
+    el.innerHTML = `<span class="status-err">⚠ ${result.error}</span>`;
+    return;
+  }
+
+  const allOk = result.onlyLocalCount === 0 && result.onlyDriveCount === 0;
+
+  if (allOk) {
+    el.innerHTML = `<span class="status-ok">✓ ${result.syncedCount} files in sync</span><span class="status-meta">Local ${result.localCount} · Drive ${result.driveCount} · checked ${result.checkedAt}</span>`;
+  } else {
+    const parts = [];
+    if (result.onlyLocalCount > 0) parts.push(`${result.onlyLocalCount} not on Drive`);
+    if (result.onlyDriveCount > 0) parts.push(`${result.onlyDriveCount} not downloaded`);
+    el.innerHTML = `<span class="status-warn">⚠ ${parts.join(' · ')}</span><span class="status-meta">Local ${result.localCount} · Drive ${result.driveCount} · checked ${result.checkedAt}</span>`;
+  }
+}
+
+function refreshInlineSyncStatus(index) {
+  const mapping = settings.folderMappings[index];
+  if (!mapping || !mapping.driveId || !settings.isAuthenticated) return;
+  const el = document.getElementById(`mapping-status-${index}`);
+  if (el) el.innerHTML = '<span class="status-checking">Checking…</span>';
+  loadInlineSyncStatus(index, mapping);
 }
 
 async function deleteMapping(index) {

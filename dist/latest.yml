@@ -1,8 +1,8 @@
-version: 1.2.18
+version: 1.2.19
 files:
-  - url: RRightclickrr-Setup-1.2.18.exe
-    sha512: bKXuyqjewTQRcWllOoodj+XZJjGhQqNtYWoKvez0w4MQvKda5C+/SshqTe64qQKaXnJjsOZQRP1y0Djm4BdNDg==
-    size: 102560142
-path: RRightclickrr-Setup-1.2.18.exe
-sha512: bKXuyqjewTQRcWllOoodj+XZJjGhQqNtYWoKvez0w4MQvKda5C+/SshqTe64qQKaXnJjsOZQRP1y0Djm4BdNDg==
-releaseDate: '2026-03-13T20:14:58.439Z'
+  - url: RRightclickrr-Setup-1.2.19.exe
+    sha512: Gy3PEQ9ehD8J5lT4G3TNIpu0tDLWGXSyYy0m8pnzd8yXIEYlBTPkiRXUxyg4EYaGHAANAhrMEVHBlDG4Uu4+Ug==
+    size: 102560587
+path: RRightclickrr-Setup-1.2.19.exe
+sha512: Gy3PEQ9ehD8J5lT4G3TNIpu0tDLWGXSyYy0m8pnzd8yXIEYlBTPkiRXUxyg4EYaGHAANAhrMEVHBlDG4Uu4+Ug==
+releaseDate: '2026-03-13T21:56:28.960Z'

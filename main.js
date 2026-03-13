@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const pathModule = require('path');
 
-const BUILD_STAMP = '2026-03-13-sync-status-ui-v1.2.18';
+const BUILD_STAMP = '2026-03-13-inline-sync-status-v1.2.19';
 const BOOT_LOG = pathModule.join(os.homedir(), 'rrightclickrr-boot.log');
 
 // File-based logger that NEVER touches stdout/stderr

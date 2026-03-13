@@ -226,7 +226,16 @@ async function loadInlineSyncStatus(index, mapping) {
     const parts = [];
     if (result.onlyLocalCount > 0) parts.push(`${result.onlyLocalCount} not on Drive`);
     if (result.onlyDriveCount > 0) parts.push(`${result.onlyDriveCount} not downloaded`);
-    el.innerHTML = `<span class="status-warn">⚠ ${parts.join(' · ')}</span><span class="status-meta">Local ${result.localCount} · Drive ${result.driveCount} · checked ${result.checkedAt}</span>`;
+    el.innerHTML = `<span class="status-warn">⚠ ${parts.join(' · ')}</span><span class="status-meta">Local ${result.localCount} · Drive ${result.driveCount} · checked ${result.checkedAt}</span><button class="btn btn-sync-now" data-localpath="${mapping.localPath}" data-statusidx="${index}">Sync Now</button>`;
+
+    el.querySelector('.btn-sync-now').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      await window.api.triggerSync(mapping.localPath);
+      // Re-check after a short delay to let the sync start
+      setTimeout(() => refreshInlineSyncStatus(index), 5000);
+    });
   }
 }
 

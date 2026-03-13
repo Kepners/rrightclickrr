@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
   // Sync status check
   checkSyncStatus: (localPath, driveId, excludePaths) => ipcRenderer.invoke('check-sync-status', { localPath, driveId, excludePaths }),
 
+  // Trigger a bidirectional sync job for a mapping
+  triggerSync: (localPath) => ipcRenderer.invoke('trigger-sync', { localPath }),
+
   // Delete from Drive
   deleteFromDrive: (localPath, driveId) => ipcRenderer.invoke('delete-from-drive', { localPath, driveId }),
   stopWatching: (localPath) => ipcRenderer.invoke('stop-watching', { localPath }),

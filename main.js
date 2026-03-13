@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const pathModule = require('path');
 
-const BUILD_STAMP = '2026-03-13-inline-sync-status-v1.2.19';
+const BUILD_STAMP = '2026-03-13-sync-now-button-v1.2.20';
 const BOOT_LOG = pathModule.join(os.homedir(), 'rrightclickrr-boot.log');
 
 // File-based logger that NEVER touches stdout/stderr
@@ -1751,6 +1751,29 @@ if (!gotTheLock) {
   });
 
   // === DELETE FROM DRIVE HANDLER ===
+
+  ipcMain.handle('trigger-sync', async (event, { localPath }) => {
+    try {
+      if (!googleAuth.isAuthenticated()) {
+        return { success: false, error: 'Not authenticated' };
+      }
+      const mappings = store.get('folderMappings') || [];
+      const mapping = mappings.find(m => m.localPath === localPath);
+      if (!mapping) {
+        return { success: false, error: 'Mapping not found' };
+      }
+      enqueueSyncJob({
+        folderPath: localPath,
+        mode: 'sync',
+        driveId: mapping.driveId,
+        driveName: mapping.driveName,
+        pullFromDrive: true
+      }, { front: true });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
 
   ipcMain.handle('delete-from-drive', async (event, { localPath, driveId }) => {
     try {

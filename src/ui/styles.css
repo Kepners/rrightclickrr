@@ -774,3 +774,18 @@ body {
 .status-warn     { color: var(--warm);    font-weight: 600; }
 .status-err      { color: var(--danger);  font-weight: 600; }
 .status-meta     { color: var(--text-muted); font-size: 0.7rem; }
+
+.btn-sync-now {
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--warm);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.btn-sync-now:hover { background: #c47a30; }
+.btn-sync-now:disabled { opacity: 0.6; cursor: not-allowed; }

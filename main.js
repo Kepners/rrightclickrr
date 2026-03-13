@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const pathModule = require('path');
 
-const BUILD_STAMP = '2026-01-19-epipe-fix-v4';
+const BUILD_STAMP = '2026-03-13-two-way-sync-v1.2.17';
 const BOOT_LOG = pathModule.join(os.homedir(), 'rrightclickrr-boot.log');
 
 // File-based logger that NEVER touches stdout/stderr
@@ -279,6 +279,9 @@ if (!gotTheLock) {
             showNotification('Signed In', 'Successfully connected to Google Drive!');
             processSyncQueue();
             updateTrayMenu();
+            initializeDriveChanges().catch(err => {
+              safeLog(`Drive Changes API init error after tray sign-in: ${err.message}`);
+            });
           } catch (error) {
             showNotification('Sign In Failed', error.message);
           }
@@ -453,8 +456,15 @@ if (!gotTheLock) {
   let syncQueue = [];
   let isQueueProcessing = false;
   let drivePollingTimer = null;
-  let hasLoggedDrivePollingDisabled = false;
-  const DRIVE_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — faster remote detection
+  const DRIVE_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+
+  // Drive file cache: Map<driveRootId, Map<driveFileId, { relativePath, isFolder }>>
+  // Built once at startup, kept up-to-date by the Changes API poll.
+  const driveFileCache = new Map();
+  // Reverse lookup: Map<driveFileId, driveRootId> — for fast membership tests
+  const driveIdToRoot = new Map();
+  // Files recently downloaded from Drive — suppress watcher re-upload for these
+  const recentlyDownloadedFromDrive = new Set();
 
   function normalizeSyncJob(input) {
     const folderPath = input?.folderPath;
@@ -465,6 +475,7 @@ if (!gotTheLock) {
       mode: input.mode === 'copy' ? 'copy' : 'sync',
       onlyFiles: Array.isArray(input.onlyFiles) ? input.onlyFiles : [],
       source: input.source || 'manual',
+      pullFromDrive: Boolean(input.pullFromDrive),
       createdAt: input.createdAt || new Date().toISOString()
     };
   }
@@ -607,10 +618,8 @@ if (!gotTheLock) {
 
   function startDrivePolling() {
     stopDrivePolling();
-    if (!hasLoggedDrivePollingDisabled) {
-      safeLog('Drive polling disabled: remote delta detection is not implemented yet');
-      hasLoggedDrivePollingDisabled = true;
-    }
+    drivePollingTimer = setInterval(pollDriveForChanges, DRIVE_POLL_INTERVAL_MS);
+    safeLog(`Drive Changes API polling started (every ${DRIVE_POLL_INTERVAL_MS / 1000}s)`);
   }
 
   function stopDrivePolling() {
@@ -620,8 +629,195 @@ if (!gotTheLock) {
     }
   }
 
-  function pollDriveForChanges() {
-    return;
+  /**
+   * Build an in-memory cache of all Drive file/folder IDs for a watched mapping.
+   * Runs async in the background — does not block app startup.
+   */
+  async function buildDriveFileCacheForMapping(mapping) {
+    safeLog(`Building Drive file cache for: ${mapping.localPath}`);
+    const cache = new Map();
+    // Root itself
+    cache.set(mapping.driveId, { relativePath: '', isFolder: true });
+    driveIdToRoot.set(mapping.driveId, mapping.driveId);
+
+    const walk = async (folderId, relPath) => {
+      try {
+        const children = await driveUploader.listChildren(folderId);
+        for (const child of children) {
+          if (!child.id || !child.name) continue;
+          const isFolder = child.mimeType === 'application/vnd.google-apps.folder';
+          const childRelPath = relPath ? `${relPath}/${child.name}` : child.name;
+          cache.set(child.id, { relativePath: childRelPath, isFolder });
+          driveIdToRoot.set(child.id, mapping.driveId);
+          if (isFolder) {
+            await walk(child.id, childRelPath);
+          }
+        }
+      } catch (err) {
+        safeLog(`Drive cache walk error at ${relPath}: ${err.message}`);
+      }
+    };
+
+    await walk(mapping.driveId, '');
+    driveFileCache.set(mapping.driveId, cache);
+    safeLog(`Drive file cache ready for ${mapping.localPath}: ${cache.size} entries`);
+  }
+
+  /**
+   * Initialize Drive Changes API for all active mappings.
+   * Gets a start page token (once) and builds the file cache (async).
+   */
+  async function initializeDriveChanges() {
+    if (!googleAuth?.isAuthenticated()) return;
+
+    const mappings = (store.get('folderMappings') || []).filter(m => m.watching !== false && m.driveId);
+    if (mappings.length === 0) return;
+
+    try {
+      const tokens = store.get('driveChangeTokens') || {};
+      if (!tokens['__global__']) {
+        const startToken = await driveUploader.getChangesStartPageToken();
+        tokens['__global__'] = startToken;
+        store.set('driveChangeTokens', tokens);
+        safeLog(`Drive Changes API token initialized: ${startToken}`);
+      }
+    } catch (err) {
+      safeLog(`Failed to initialize Drive Changes API token: ${err.message}`);
+      return;
+    }
+
+    // Build file cache for each mapping (non-blocking)
+    for (const mapping of mappings) {
+      if (!driveFileCache.has(mapping.driveId)) {
+        buildDriveFileCacheForMapping(mapping).catch(err => {
+          safeLog(`Drive cache build failed for ${mapping.localPath}: ${err.message}`);
+        });
+      }
+    }
+  }
+
+  /**
+   * Poll Drive for remote changes using the Changes API.
+   * Only fetches what actually changed — O(1) API calls regardless of folder size.
+   */
+  async function pollDriveForChanges() {
+    if (!googleAuth?.isAuthenticated()) return;
+
+    const tokens = store.get('driveChangeTokens') || {};
+    const globalToken = tokens['__global__'];
+    if (!globalToken) {
+      // Token not yet initialized (auth may have just happened — initialize now)
+      await initializeDriveChanges();
+      return;
+    }
+
+    const mappings = (store.get('folderMappings') || []).filter(m => m.watching !== false && m.driveId);
+    if (mappings.length === 0) return;
+
+    try {
+      const { changes, newStartPageToken } = await driveUploader.getChangesSince(globalToken);
+
+      if (newStartPageToken && newStartPageToken !== globalToken) {
+        tokens['__global__'] = newStartPageToken;
+        store.set('driveChangeTokens', tokens);
+      }
+
+      if (changes.length === 0) return;
+
+      safeLog(`Drive Changes API: ${changes.length} change(s)`);
+
+      for (const change of changes) {
+        const fileId = change.fileId;
+        const file = change.file;
+
+        // Find which watched root this file belongs to
+        let driveRootId = driveIdToRoot.get(fileId);
+        if (!driveRootId && file?.parents?.length) {
+          driveRootId = driveIdToRoot.get(file.parents[0]);
+        }
+        if (!driveRootId) continue;
+
+        const mapping = mappings.find(m => m.driveId === driveRootId);
+        if (!mapping) continue;
+
+        const cache = driveFileCache.get(driveRootId);
+        if (!cache) continue; // Cache not ready yet
+
+        // --- Deletion ---
+        if (change.removed || file?.trashed) {
+          const cached = cache.get(fileId);
+          if (cached) {
+            cache.delete(fileId);
+            driveIdToRoot.delete(fileId);
+            safeLog(`Drive delete detected: ${cached.relativePath}`);
+            // Note: we don't auto-delete local files for safety.
+            // The upload watcher handles local→Drive deletes; Drive→local deletes
+            // are a destructive operation so we leave them as manual for now.
+          }
+          continue;
+        }
+
+        if (!file?.parents?.length) continue;
+
+        const parentId = file.parents[0];
+        const parentInfo = cache.get(parentId);
+        if (!parentInfo) continue; // File is outside our watched tree
+
+        const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+        const fileRelPath = parentInfo.relativePath
+          ? `${parentInfo.relativePath}/${file.name}`
+          : file.name;
+        const localFilePath = path.join(mapping.localPath, fileRelPath.replace(/\//g, path.sep));
+
+        // Update our cache with this file
+        cache.set(fileId, { relativePath: fileRelPath, isFolder });
+        driveIdToRoot.set(fileId, driveRootId);
+
+        if (isFolder) {
+          try {
+            await fs.promises.mkdir(localFilePath, { recursive: true });
+            safeLog(`Drive → local: created folder ${fileRelPath}`);
+          } catch (err) {
+            safeLog(`Drive → local: failed to create folder ${fileRelPath}: ${err.message}`);
+          }
+          continue;
+        }
+
+        // --- File add / update ---
+        try {
+          const localExists = fs.existsSync(localFilePath);
+          let shouldDownload = !localExists;
+
+          if (localExists && file.modifiedTime) {
+            const localStat = fs.statSync(localFilePath);
+            const driveModMs = new Date(file.modifiedTime).getTime();
+            // Download if Drive version is meaningfully newer (>5s tolerance)
+            shouldDownload = driveModMs > localStat.mtimeMs + 5000;
+          }
+
+          if (!shouldDownload) continue;
+
+          safeLog(`Drive → local: downloading ${fileRelPath}`);
+          // Mark before download so the watcher debounce window is covered
+          recentlyDownloadedFromDrive.add(localFilePath);
+          try {
+            await driveUploader.downloadFile(fileId, localFilePath);
+          } finally {
+            // Clear the suppression after chokidar debounce (2s) + buffer
+            setTimeout(() => recentlyDownloadedFromDrive.delete(localFilePath), 5000);
+          }
+
+          if (store.get('showNotifications')) {
+            const action = localExists ? 'Updated from Drive' : 'Downloaded from Drive';
+            showNotification(action, path.basename(fileRelPath));
+          }
+        } catch (err) {
+          safeLog(`Drive → local: failed to download ${fileRelPath}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      safeLog(`Drive Changes API poll error: ${err.message}`);
+    }
   }
 
   function enqueueSyncJob(jobInput, options = {}) {
@@ -699,8 +895,8 @@ if (!gotTheLock) {
       safeLog('Discarded stale active drive-poll sync session during startup recovery');
     }
 
-    // On every startup, ensure a full sync is queued for each watched folder so
-    // any changes that happened while the app was offline get picked up immediately.
+    // On every startup, ensure a full bidirectional sync is queued for each watched folder
+    // so changes that happened while the app was offline get picked up immediately.
     const mappings = store.get('folderMappings') || [];
     for (const mapping of mappings) {
       if (mapping.watching === false || !mapping.driveId) continue;
@@ -708,7 +904,8 @@ if (!gotTheLock) {
         syncQueue.push(normalizeSyncJob({
           folderPath: mapping.localPath,
           mode: 'sync',
-          source: 'startup-catchup'
+          source: 'startup-catchup',
+          pullFromDrive: true  // download Drive-only files to local on startup
         }));
       }
     }
@@ -865,7 +1062,8 @@ if (!gotTheLock) {
       const runtimeOptions = {
         ...getSyncRuntimeOptions(),
         onlyFiles: job.onlyFiles || [],
-        syncMode: job.mode
+        syncMode: job.mode,
+        pullFromDrive: Boolean(job.pullFromDrive)
       };
 
       const result = await folderSync.syncFolder(job.folderPath, (progress) => {
@@ -926,6 +1124,13 @@ if (!gotTheLock) {
           }
           store.set('folderMappings', mappings);
           syncWatchersWithMappings(mappings);
+          // Rebuild Drive file cache for this mapping now that we know its driveId
+          if (result.folderId) {
+            const newMapping = { localPath: job.folderPath, driveId: result.folderId };
+            buildDriveFileCacheForMapping(newMapping).catch(err => {
+              safeLog(`Drive cache rebuild failed after sync: ${err.message}`);
+            });
+          }
         }
       }
 
@@ -1316,6 +1521,10 @@ if (!gotTheLock) {
       await googleAuth.authenticate();
       updateTrayMenu();
       processSyncQueue();
+      // Initialize Drive Changes API now that we have auth
+      initializeDriveChanges().catch(err => {
+        safeLog(`Drive Changes API init error after auth: ${err.message}`);
+      });
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -1526,6 +1735,11 @@ if (!gotTheLock) {
         safeLog('Skipping auto-sync - autoUpload disabled');
         return;
       }
+      // Skip files we just downloaded from Drive — avoid the upload→download loop
+      if (recentlyDownloadedFromDrive.has(data.filePath)) {
+        safeLog(`Skipping upload of ${data.relativePath} — recently downloaded from Drive`);
+        return;
+      }
 
       const { filePath, localPath, driveName, relativePath } = data;
       if (!fs.existsSync(filePath)) {
@@ -1653,8 +1867,15 @@ if (!gotTheLock) {
     // Start queue processing if any jobs exist and auth is ready.
     processSyncQueue();
 
-    // Start polling Drive for remote changes every 5 minutes.
+    // Start polling Drive for remote changes.
     startDrivePolling();
+
+    // Initialize the Changes API token + file cache if already authenticated.
+    if (googleAuth.isAuthenticated()) {
+      initializeDriveChanges().catch(err => {
+        safeLog(`Drive Changes API init error: ${err.message}`);
+      });
+    }
 
     // Show window for direct user launches, but keep shell-triggered/background runs headless.
     const startedInBackground = process.argv.includes('--background-startup');

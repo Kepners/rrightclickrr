@@ -173,6 +173,46 @@ class DriveUploader {
     return files;
   }
 
+  /**
+   * Get the current Changes API page token (represents "now").
+   * Store this before any sync; use getChangesSince() later to get only what changed.
+   */
+  async getChangesStartPageToken() {
+    const drive = this.getDrive();
+    const response = await drive.changes.getStartPageToken();
+    return response.data.startPageToken;
+  }
+
+  /**
+   * Get all Drive changes since a given page token.
+   * Returns { changes: Array, newStartPageToken: string }
+   * newStartPageToken should replace the old token for the next poll.
+   */
+  async getChangesSince(pageToken) {
+    const drive = this.getDrive();
+    const allChanges = [];
+    let currentToken = pageToken;
+    let newStartPageToken = null;
+
+    do {
+      const response = await drive.changes.list({
+        pageToken: currentToken,
+        spaces: 'drive',
+        fields: 'nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, mimeType, parents, modifiedTime, size, md5Checksum, trashed))',
+        pageSize: 1000,
+        includeRemoved: true,
+        includeItemsFromAllDrives: false,
+        supportsAllDrives: false
+      });
+
+      allChanges.push(...(response.data.changes || []));
+      newStartPageToken = response.data.newStartPageToken || null;
+      currentToken = response.data.nextPageToken || null;
+    } while (currentToken);
+
+    return { changes: allChanges, newStartPageToken };
+  }
+
   async listFilesRecursive(rootFolderId) {
     const queue = [{ folderId: rootFolderId, relativePath: '' }];
     const files = [];

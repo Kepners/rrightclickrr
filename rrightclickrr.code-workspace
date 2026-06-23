@@ -21,7 +21,10 @@
                                                        },
                      "claudeCode.allowDangerouslySkipPermissions":  true,
                      "claudeCode.useCtrlEnterToSend":  false,
-                     "window.title":  "rrightclickrr - ${activeEditorShort}"
+                     "window.title":  "rrightclickrr - ${activeEditorShort}",
+                     "files.exclude": {
+                         ".claude/settings.local.json": true
+                     }
                  },
     "extensions":  {
                        "recommendations":  [
